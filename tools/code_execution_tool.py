@@ -7,11 +7,11 @@ collapsing multi-step tool chains into a single inference turn.
 
 Architecture (two transports):
 
-  **Local backend (UDS):**
-  1. Parent generates a `hermes_tools.py` stub module with UDS RPC functions
-  2. Parent opens a Unix domain socket and starts an RPC listener thread
+  **Local backend (UDS/Named Pipe):**
+  1. Parent generates a `hermes_tools.py` stub module with IPC RPC functions
+  2. Parent opens a Unix domain socket (Unix) or Named Pipe (Windows) and starts an RPC listener thread
   3. Parent spawns a child process that runs the LLM's script
-  4. Tool calls travel over the UDS back to the parent for dispatch
+  4. Tool calls travel over the IPC channel back to the parent for dispatch
 
   **Remote backends (file-based RPC):**
   1. Parent generates `hermes_tools.py` with file-based RPC stubs
@@ -24,7 +24,7 @@ Architecture (two transports):
 In both cases, only the script's stdout is returned to the LLM; intermediate
 tool results never enter the context window.
 
-Platform: Linux / macOS only (Unix domain sockets for local). Disabled on Windows.
+Platform: Linux, macOS, and Windows (Named Pipe on Windows, UDS on Unix).
 Remote execution additionally requires Python 3 in the terminal backend.
 """
 
@@ -46,10 +46,27 @@ import uuid
 _IS_WINDOWS = platform.system() == "Windows"
 from typing import Any, Dict, List, Optional
 
-# Availability gate: UDS requires a POSIX OS
+# Windows compatibility layer
+from tools.windows_compat import (
+    is_windows,
+    create_ipc_server,
+    create_ipc_client,
+    WindowsNamedPipeServer,
+    WindowsNamedPipeClient,
+    check_named_pipe_requirements,
+)
+
+# Availability gate: check platform support
 logger = logging.getLogger(__name__)
 
-SANDBOX_AVAILABLE = sys.platform != "win32"
+# Sandbox is available on Unix (UDS) and Windows with pywin32 (Named Pipe)
+if _IS_WINDOWS:
+    _np_available, _np_msg = check_named_pipe_requirements()
+    SANDBOX_AVAILABLE = _np_available
+    if not _np_available:
+        logger.warning(f"Code execution disabled on Windows: {_np_msg}")
+else:
+    SANDBOX_AVAILABLE = True
 
 # The 7 tools allowed inside the sandbox. The intersection of this list
 # and the session's enabled tools determines which stubs are generated.
@@ -202,31 +219,76 @@ def retry(fn, max_attempts=3, delay=2):
 
 '''
 
-# ---- UDS transport (local backend) ---------------------------------------
+# ---- IPC transport (local backend) ---------------------------------------
+# Supports both Unix Domain Sockets (Unix) and Named Pipes (Windows)
 
-_UDS_TRANSPORT_HEADER = '''\
+_IPC_TRANSPORT_HEADER = '''\
 """Auto-generated Hermes tools RPC stubs."""
-import json, os, socket, shlex, time
+import json, os, sys, shlex, time
 
 _sock = None
-''' + _COMMON_HELPERS + '''\
 
 def _connect():
     global _sock
     if _sock is None:
-        _sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        _sock.connect(os.environ["HERMES_RPC_SOCKET"])
-        _sock.settimeout(300)
+        if sys.platform == "win32":
+            # Windows: Named Pipe
+            import win32file
+            import pywintypes
+            pipe_name = os.environ["HERMES_RPC_SOCKET"]
+            for _ in range(10):
+                try:
+                    _sock = win32file.CreateFile(
+                        pipe_name,
+                        win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+                        0, None,
+                        win32file.OPEN_EXISTING,
+                        0, None
+                    )
+                    break
+                except pywintypes.error:
+                    time.sleep(0.1)
+            if _sock is None or _sock == -1:
+                raise RuntimeError(f"Could not connect to named pipe: {pipe_name}")
+        else:
+            # Unix: Unix Domain Socket
+            import socket
+            _sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            _sock.connect(os.environ["HERMES_RPC_SOCKET"])
+            _sock.settimeout(300)
     return _sock
+
+def _send(data):
+    """Send data over the IPC channel."""
+    if sys.platform == "win32":
+        import win32file
+        err, _ = win32file.WriteFile(_sock, data)
+        if err:
+            raise RuntimeError(f"WriteFile failed with error {err}")
+    else:
+        _sock.sendall(data)
+
+def _recv(bufsize=65536):
+    """Receive data from the IPC channel."""
+    if sys.platform == "win32":
+        import win32file
+        err, data = win32file.ReadFile(_sock, bufsize)
+        if err:
+            raise RuntimeError(f"ReadFile failed with error {err}")
+        return data
+    else:
+        return _sock.recv(bufsize)
+
+''' + _COMMON_HELPERS + '''\
 
 def _call(tool_name, args):
     """Send a tool call to the parent process and return the parsed result."""
     conn = _connect()
     request = json.dumps({"tool": tool_name, "args": args}) + "\\n"
-    conn.sendall(request.encode())
+    _send(request.encode())
     buf = b""
     while True:
-        chunk = conn.recv(65536)
+        chunk = _recv(65536)
         if not chunk:
             raise RuntimeError("Agent process disconnected")
         buf += chunk
@@ -242,6 +304,9 @@ def _call(tool_name, args):
     return result
 
 '''
+
+# Alias for backward compatibility
+_UDS_TRANSPORT_HEADER = _IPC_TRANSPORT_HEADER
 
 # ---- File-based transport (remote backends) -------------------------------
 
@@ -305,7 +370,7 @@ _TERMINAL_BLOCKED_PARAMS = {"background", "pty", "notify_on_complete", "watch_pa
 
 
 def _rpc_server_loop(
-    server_sock: socket.socket,
+    server_sock,
     task_id: str,
     tool_call_log: list,
     tool_call_counter: list,   # mutable [int] so the thread can increment
@@ -315,14 +380,30 @@ def _rpc_server_loop(
     """
     Accept one client connection and dispatch tool-call requests until
     the client disconnects or the call limit is reached.
+    
+    Supports both Unix Domain Sockets (Unix) and Named Pipes (Windows).
     """
     from model_tools import handle_function_call
 
+    def _send_response(conn, data: bytes):
+        """Cross-platform send for both Unix sockets and Windows Named Pipes."""
+        if _IS_WINDOWS:
+            conn.send(data)
+        else:
+            conn.sendall(data)
+
     conn = None
     try:
-        server_sock.settimeout(5)
-        conn, _ = server_sock.accept()
-        conn.settimeout(300)
+        # Accept connection
+        if _IS_WINDOWS:
+            # Windows Named Pipe: accept returns (self, None)
+            server_sock.accept()
+            conn = server_sock
+        else:
+            # Unix Domain Socket
+            server_sock.settimeout(5)
+            conn, _ = server_sock.accept()
+            conn.settimeout(300)
 
         buf = b""
         while True:
@@ -346,7 +427,7 @@ def _rpc_server_loop(
                     request = json.loads(line.decode())
                 except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                     resp = tool_error(f"Invalid RPC request: {exc}")
-                    conn.sendall((resp + "\n").encode())
+                    _send_response(conn, (resp + "\n").encode())
                     continue
 
                 tool_name = request.get("tool", "")
@@ -361,7 +442,7 @@ def _rpc_server_loop(
                             f"Available: {available}"
                         )
                     })
-                    conn.sendall((resp + "\n").encode())
+                    _send_response(conn, (resp + "\n").encode())
                     continue
 
                 # Enforce tool call limit
@@ -372,7 +453,7 @@ def _rpc_server_loop(
                             "No more tool calls allowed in this execution."
                         )
                     })
-                    conn.sendall((resp + "\n").encode())
+                    _send_response(conn, (resp + "\n").encode())
                     continue
 
                 # Strip forbidden terminal parameters
@@ -410,7 +491,7 @@ def _rpc_server_loop(
                     "duration": round(call_duration, 2),
                 })
 
-                conn.sendall((result + "\n").encode())
+                _send_response(conn, (result + "\n").encode())
 
     except socket.timeout:
         logger.debug("RPC listener socket timeout")
@@ -910,7 +991,7 @@ def execute_code(
     """
     if not SANDBOX_AVAILABLE:
         return json.dumps({
-            "error": "execute_code is not available on Windows. Use normal tool calls instead."
+            "error": "execute_code is not available. Install pywin32 on Windows: pip install pywin32"
         })
 
     if not code or not code.strip():
@@ -941,11 +1022,18 @@ def execute_code(
 
     # --- Set up temp directory with hermes_tools.py and script.py ---
     tmpdir = tempfile.mkdtemp(prefix="hermes_sandbox_")
-    # Use /tmp on macOS to avoid the long /var/folders/... path that pushes
-    # Unix domain socket paths past the 104-byte macOS AF_UNIX limit.
-    # On Linux, tempfile.gettempdir() already returns /tmp.
-    _sock_tmpdir = "/tmp" if sys.platform == "darwin" else tempfile.gettempdir()
-    sock_path = os.path.join(_sock_tmpdir, f"hermes_rpc_{uuid.uuid4().hex}.sock")
+    
+    # IPC endpoint path:
+    # - Unix: /tmp/hermes_rpc_<uuid>.sock (Unix Domain Socket)
+    # - Windows: \\.\pipe\hermes_rpc_<uuid> (Named Pipe)
+    _ipc_id = uuid.uuid4().hex
+    if _IS_WINDOWS:
+        sock_path = f"\\\\.\\pipe\\hermes_rpc_{_ipc_id}"
+    else:
+        # Use /tmp on macOS to avoid the long /var/folders/... path that pushes
+        # Unix domain socket paths past the 104-byte macOS AF_UNIX limit.
+        _sock_tmpdir = "/tmp" if sys.platform == "darwin" else tempfile.gettempdir()
+        sock_path = os.path.join(_sock_tmpdir, f"hermes_rpc_{_ipc_id}.sock")
 
     tool_call_log: list = []
     tool_call_counter = [0]  # mutable so the RPC thread can increment
@@ -964,10 +1052,16 @@ def execute_code(
         with open(os.path.join(tmpdir, "script.py"), "w") as f:
             f.write(code)
 
-        # --- Start UDS server ---
-        server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        server_sock.bind(sock_path)
-        server_sock.listen(1)
+        # --- Start IPC server ---
+        # Unix: Unix Domain Socket
+        # Windows: Named Pipe
+        if _IS_WINDOWS:
+            server_sock = WindowsNamedPipeServer(sock_path)
+            server_sock.listen()
+        else:
+            server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server_sock.bind(sock_path)
+            server_sock.listen(1)
 
         rpc_thread = threading.Thread(
             target=_rpc_server_loop,

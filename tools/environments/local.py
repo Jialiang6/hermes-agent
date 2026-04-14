@@ -11,6 +11,14 @@ from tools.environments.base import BaseEnvironment, _pipe_stdin
 
 _IS_WINDOWS = platform.system() == "Windows"
 
+# Windows compatibility layer
+from tools.windows_compat import (
+    is_windows,
+    detect_shell,
+    get_shell_args,
+    terminate_process_tree,
+)
+
 
 # Hermes-internal env vars that should NOT leak into terminal subprocesses.
 _HERMES_PROVIDER_ENV_FORCE_PREFIX = "_HERMES_FORCE_"
@@ -139,7 +147,11 @@ def _sanitize_subprocess_env(base_env: dict | None, extra_env: dict | None = Non
 
 
 def _find_bash() -> str:
-    """Find bash for command execution."""
+    """Find bash for command execution.
+    
+    On Unix: Uses bash from PATH, /usr/bin/bash, /bin/bash, $SHELL, or /bin/sh
+    On Windows: Prefers Git Bash, falls back to PowerShell or cmd.exe
+    """
     if not _IS_WINDOWS:
         return (
             shutil.which("bash")
@@ -149,6 +161,7 @@ def _find_bash() -> str:
             or "/bin/sh"
         )
 
+    # Windows: Try Git Bash first (best compatibility)
     custom = os.environ.get("HERMES_GIT_BASH_PATH")
     if custom and os.path.isfile(custom):
         return custom
@@ -165,15 +178,43 @@ def _find_bash() -> str:
         if candidate and os.path.isfile(candidate):
             return candidate
 
+    # Fallback: Use PowerShell or cmd.exe
+    # PowerShell Core (pwsh) is preferred over Windows PowerShell
+    pwsh = shutil.which("pwsh")
+    if pwsh:
+        return pwsh
+    
+    powershell = shutil.which("powershell")
+    if powershell:
+        return powershell
+    
+    # Last resort: cmd.exe
+    cmd = shutil.which("cmd.exe")
+    if cmd:
+        return cmd
+    
+    # Check system paths
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")
+    for candidate in [
+        os.path.join(system_root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+        os.path.join(system_root, "System32", "cmd.exe"),
+    ]:
+        if os.path.isfile(candidate):
+            return candidate
+
     raise RuntimeError(
-        "Git Bash not found. Hermes Agent requires Git for Windows on Windows.\n"
-        "Install it from: https://git-scm.com/download/win\n"
+        "No shell found on Windows. Install one of:\n"
+        "  • Git for Windows: https://git-scm.com/download/win\n"
+        "  • PowerShell Core: https://github.com/PowerShell/PowerShell\n"
         "Or set HERMES_GIT_BASH_PATH to your bash.exe location."
     )
 
 
-# Backward compat — process_registry.py imports this name
-_find_shell = _find_bash
+def _find_shell() -> str:
+    """Find the best available shell (uses windows_compat.detect_shell on Windows)."""
+    if _IS_WINDOWS:
+        return detect_shell()
+    return _find_bash()
 
 
 # Standard PATH entries for environments with minimal PATH.

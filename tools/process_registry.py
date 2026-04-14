@@ -41,6 +41,15 @@ import time
 import uuid
 
 _IS_WINDOWS = platform.system() == "Windows"
+
+# Windows compatibility layer
+from tools.windows_compat import (
+    is_windows,
+    terminate_process_tree,
+    SIGTERM,
+    SIGKILL,
+)
+
 from tools.environments.local import _find_shell, _sanitize_subprocess_env
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -259,14 +268,8 @@ class ProcessRegistry:
     @staticmethod
     def _terminate_host_pid(pid: int) -> None:
         """Terminate a host-visible PID without requiring the original process handle."""
-        if _IS_WINDOWS:
-            os.kill(pid, signal.SIGTERM)
-            return
-
-        try:
-            os.killpg(os.getpgid(pid), signal.SIGTERM)
-        except (OSError, ProcessLookupError, PermissionError):
-            os.kill(pid, signal.SIGTERM)
+        # Use cross-platform process tree termination
+        terminate_process_tree(pid, force=False)
 
     # ----- Spawn -----
 
@@ -778,14 +781,11 @@ class ProcessRegistry:
                     session._pty.terminate(force=True)
                 except Exception:
                     if session.pid:
-                        os.kill(session.pid, signal.SIGTERM)
+                        terminate_process_tree(session.pid, force=True)
             elif session.process:
-                # Local process -- kill the process group
+                # Local process -- kill the process tree (cross-platform)
                 try:
-                    if _IS_WINDOWS:
-                        session.process.terminate()
-                    else:
-                        os.killpg(os.getpgid(session.process.pid), signal.SIGTERM)
+                    terminate_process_tree(session.process.pid, force=False)
                 except (ProcessLookupError, PermissionError):
                     session.process.kill()
             elif session.env_ref and session.pid:

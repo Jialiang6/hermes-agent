@@ -550,7 +550,7 @@ function Install-Dependencies {
         $env:VIRTUAL_ENV = "$InstallDir\venv"
     }
     
-    # Install main package with all extras
+    # Install main package with all extras (includes [windows] on Windows)
     try {
         & $UvCmd pip install -e ".[all]" 2>&1 | Out-Null
     } catch {
@@ -558,6 +558,20 @@ function Install-Dependencies {
     }
     
     Write-Success "Main package installed"
+    
+    # Windows-specific: ensure pywin32 is installed for Named Pipe IPC
+    # This enables the execute_code tool on Windows
+    if ($IsWindows -or $env:OS -eq "Windows_NT") {
+        Write-Info "Installing Windows native support (pywin32)..."
+        try {
+            & $UvCmd pip install "pywin32>=306" 2>&1 | Out-Null
+            Write-Success "Windows native support enabled"
+            Write-Info "  - Named Pipe IPC for execute_code tool"
+            Write-Info "  - Cross-platform process management"
+        } catch {
+            Write-Warn "pywin32 install failed (execute_code may not work)"
+        }
+    }
     
     # Install optional submodules
     Write-Info "Installing tinker-atropos (RL training backend)..."
