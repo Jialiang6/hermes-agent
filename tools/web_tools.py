@@ -235,6 +235,9 @@ def _get_firecrawl_client():
     if _firecrawl_client is not None and _firecrawl_client_config == client_config:
         return _firecrawl_client
 
+    # Add a default timeout so web searches don't block forever on API issues.
+    # Per-call timeout=... in search/crawl/extract overrides this when needed.
+    kwargs.setdefault("timeout", 30)
     _firecrawl_client = Firecrawl(**kwargs)
     _firecrawl_client_config = client_config
     return _firecrawl_client
@@ -888,7 +891,7 @@ def _get_exa_client():
                 "EXA_API_KEY environment variable not set. "
                 "Get your API key at https://exa.ai"
             )
-        _exa_client = Exa(api_key=api_key)
+        _exa_client = Exa(api_key=api_key, timeout=30)
         _exa_client.headers["x-exa-integration"] = "hermes-agent"
     return _exa_client
 

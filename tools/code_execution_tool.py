@@ -272,10 +272,18 @@ def _recv(bufsize=65536):
     """Receive data from the IPC channel."""
     if sys.platform == "win32":
         import win32file
-        err, data = win32file.ReadFile(_sock, bufsize)
-        if err:
-            raise RuntimeError(f"ReadFile failed with error {err}")
-        return data
+        import pywintypes
+        try:
+            err, data = win32file.ReadFile(_sock, bufsize)
+            if err:
+                raise RuntimeError(f"ReadFile failed with error {err}")
+            return data
+        except pywintypes.error as e:
+            # Error 109 (ERROR_BROKEN_PIPE) = server closed connection
+            # Return empty bytes so the caller treats it as EOF
+            if e.winerror == 109:
+                return b""
+            raise
     else:
         return _sock.recv(bufsize)
 
@@ -376,12 +384,18 @@ def _rpc_server_loop(
     tool_call_counter: list,   # mutable [int] so the thread can increment
     max_tool_calls: int,
     allowed_tools: frozenset,
+    shutdown_event: threading.Event = None,
 ):
     """
     Accept one client connection and dispatch tool-call requests until
     the client disconnects or the call limit is reached.
     
     Supports both Unix Domain Sockets (Unix) and Named Pipes (Windows).
+    
+    Args:
+        shutdown_event: Optional Event to signal graceful shutdown.
+                        On Windows, this replaces the old timeout-based accept
+                        that could race against slow subprocess startup.
     """
     from model_tools import handle_function_call
 
@@ -394,11 +408,33 @@ def _rpc_server_loop(
 
     conn = None
     try:
-        # Accept connection
+        # Accept connection (blocking). On Windows, accept() previously used
+        # a 5-second timeout which could fire before a slow-starting subprocess
+        # connected — leaving the subprocess with a dangling connection to a
+        # destroyed pipe handle. The new approach: accept() blocks indefinitely,
+        # and shutdown is driven by the shutdown_event so the thread exits cleanly
+        # when the parent process shuts down.
         if _IS_WINDOWS:
-            # Windows Named Pipe: accept returns (self, None)
-            server_sock.accept()
+            # On Windows, accept() blocks indefinitely (no timeout).
+            # ConnectNamedPipe() is the blocking call; if the subprocess
+            # never connects, accept() would block forever — but the thread
+            # is daemon=True so it won't block process exit.
             conn = server_sock
+            # Wait for the subprocess to connect, or for shutdown signal.
+            # The subprocess connects via WindowsNamedPipeClient; we poll
+            # with a short interval so shutdown_event can interrupt us.
+            while True:
+                if shutdown_event and shutdown_event.is_set():
+                    return
+                try:
+                    # Give the subprocess time to start up on Windows.
+                    # Python + pywin32 DLL loading can take several seconds.
+                    # We retry indefinitely (via the loop) until the subprocess
+                    # connects or shutdown_event is set.
+                    server_sock.accept(timeout=10.0)
+                    break  # Client connected
+                except TimeoutError:
+                    continue  # Keep waiting
         else:
             # Unix Domain Socket
             server_sock.settimeout(5)
@@ -626,20 +662,32 @@ def _ship_file_to_remote(env, remote_path: str, content: str) -> None:
     )
 
 
+def _is_unix_path(path: str) -> bool:
+    """Check if a path looks like a Unix absolute path (starts with /)."""
+    return isinstance(path, str) and path.startswith("/")
+
+
+def _safe_temp_dir(candidate: str) -> str:
+    """Return candidate if it is a valid, writable directory, else fall back."""
+    if _is_unix_path(candidate):
+        return candidate.rstrip("/") or "/"
+    # Windows or other platform: use as-is if directory exists and is writable
+    if os.path.isdir(candidate) and os.access(candidate, os.W_OK):
+        return candidate
+    # Ultimate fallback
+    fallback = tempfile.gettempdir()
+    return fallback if not _is_unix_path(fallback) else "/tmp"
+
+
 def _env_temp_dir(env: Any) -> str:
     """Return a writable temp dir for env-backed execute_code sandboxes."""
     get_temp_dir = getattr(env, "get_temp_dir", None)
     if callable(get_temp_dir):
         try:
-            temp_dir = get_temp_dir()
-            if isinstance(temp_dir, str) and temp_dir.startswith("/"):
-                return temp_dir.rstrip("/") or "/"
+            return _safe_temp_dir(get_temp_dir())
         except Exception as exc:
             logger.debug("Could not resolve execute_code env temp dir: %s", exc)
-    candidate = tempfile.gettempdir()
-    if isinstance(candidate, str) and candidate.startswith("/"):
-        return candidate.rstrip("/") or "/"
-    return "/tmp"
+    return _safe_temp_dir(tempfile.gettempdir())
 
 
 def _rpc_poll_loop(
@@ -1063,11 +1111,19 @@ def execute_code(
             server_sock.bind(sock_path)
             server_sock.listen(1)
 
+        # On Windows, we use a shutdown_event to cleanly interrupt the
+        # accept() polling loop. This replaces the old timeout-based accept()
+        # which could race against slow subprocess startup (DLL loading, etc.)
+        # and leave the subprocess with a dangling connection to a destroyed
+        # pipe handle — causing it to hang indefinitely on the first tool call.
+        shutdown_event = threading.Event()
+
         rpc_thread = threading.Thread(
             target=_rpc_server_loop,
             args=(
                 server_sock, task_id, tool_call_log,
                 tool_call_counter, max_tool_calls, sandbox_tools,
+                shutdown_event,
             ),
             daemon=True,
         )
@@ -1080,9 +1136,23 @@ def execute_code(
         # Exception: env vars declared by loaded skills (via env_passthrough
         # registry) or explicitly allowed by the user in config.yaml
         # (terminal.env_passthrough) are passed through.
-        _SAFE_ENV_PREFIXES = ("PATH", "HOME", "USER", "LANG", "LC_", "TERM",
-                              "TMPDIR", "TMP", "TEMP", "SHELL", "LOGNAME",
-                              "XDG_", "PYTHONPATH", "VIRTUAL_ENV", "CONDA")
+        _SAFE_ENV_PREFIXES = (
+            # POSIX-safe (Linux/macOS)
+            "PATH", "HOME", "USER", "LANG", "LC_", "TERM",
+            "TMPDIR", "TMP", "TEMP", "SHELL", "LOGNAME",
+            "XDG_", "VIRTUAL_ENV", "CONDA",
+            # Python
+            "PYTHONPATH", "PYTHONSTARTUP", "PYTHONIOENCODING",
+            "PYTHONUNBUFFERED", "PYTHONDONTWRITEBYTECODE",
+            # Windows (needed for Windows Python to find registry, system DLLs,
+            # and resolve .py/.bat files — these are silently dropped by WSL
+            # so they are NOT inherited by default from the WSL environment)
+            "SYSTEMROOT", "WINDIR",  # Windows Python: registry + system32
+            "PATHEXT",                # Windows cmd.exe: .exe;.py;.bat;.com
+            "USERPROFILE", "APPDATA", "LOCALAPPDATA",  # User directories
+            "HOMEDRIVE", "HOMEPATH",   # Windows home drive (vs HOME above)
+            "PROCESSOR_IDENTIFIER",   # Needed by some native modules
+        )
         _SECRET_SUBSTRINGS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL",
                               "PASSWD", "AUTH")
         try:
@@ -1242,6 +1312,11 @@ def execute_code(
         duration = round(time.monotonic() - exec_start, 2)
 
         # Wait for RPC thread to finish
+        # Signal the RPC thread to shut down, then close the socket to
+        # break any blocking accept(). Both signals together ensure the
+        # thread exits promptly even on Windows where accept() with a short
+        # timeout is used in a polling loop.
+        shutdown_event.set()
         server_sock.close()  # break accept() so thread exits promptly
         server_sock = None  # prevent double close in finally
         rpc_thread.join(timeout=3)
@@ -1299,7 +1374,9 @@ def execute_code(
         }, ensure_ascii=False)
 
     finally:
-        # Cleanup temp dir and socket
+        # Signal shutdown and cleanup temp dir and socket
+        if "shutdown_event" in dir() and shutdown_event is not None:
+            shutdown_event.set()
         if server_sock is not None:
             try:
                 server_sock.close()

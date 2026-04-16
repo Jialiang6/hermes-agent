@@ -36,6 +36,7 @@ import platform
 import shlex
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -280,10 +281,27 @@ class ProcessRegistry:
         if callable(get_temp_dir):
             try:
                 temp_dir = get_temp_dir()
+                # Accept both Unix (/path) and Windows (C:\path) paths
                 if isinstance(temp_dir, str) and temp_dir.startswith("/"):
                     return temp_dir.rstrip("/") or "/"
+                if isinstance(temp_dir, str) and (
+                    len(temp_dir) >= 2 and temp_dir[1] == ":"
+                    or temp_dir.startswith("\\\\")
+                ):
+                    # Windows absolute path (C:\... or \\server\share)
+                    if os.path.isdir(temp_dir) and os.access(temp_dir, os.W_OK):
+                        return temp_dir
             except Exception as exc:
                 logger.debug("Could not resolve environment temp dir: %s", exc)
+        fallback = tempfile.gettempdir()
+        if isinstance(fallback, str) and fallback.startswith("/"):
+            return fallback.rstrip("/") or "/"
+        if isinstance(fallback, str) and (
+            len(fallback) >= 2 and fallback[1] == ":"
+            or fallback.startswith("\\\\")
+        ):
+            if os.path.isdir(fallback) and os.access(fallback, os.W_OK):
+                return fallback
         return "/tmp"
 
     def spawn_local(
@@ -374,7 +392,7 @@ class ProcessRegistry:
             errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            stdin=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
             preexec_fn=None if _IS_WINDOWS else os.setsid,
         )
 

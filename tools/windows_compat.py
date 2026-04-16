@@ -333,12 +333,84 @@ class WindowsNamedPipeServer:
         if self._handle == -1:
             raise OSError(f"Failed to create named pipe: {self.name}")
     
-    def accept(self):
-        """Accept a connection. Returns (self, None) for compatibility."""
-        if not self._pywin32 or not self._handle:
-            raise RuntimeError("Named pipe not initialized")
-        
-        self._win32pipe.ConnectNamedPipe(self._handle, None)
+    def accept(self, timeout: float = 5.0):
+        """
+        Accept a client connection with a timeout.
+
+        On Windows, ConnectNamedPipe blocks until a client connects.
+        We run it in a background thread so we can honor the timeout.
+
+        Args:
+            timeout: Maximum seconds to wait for a connection (default: 5.0)
+
+        Returns:
+            (self, None) tuple on success
+
+        Raises:
+            TimeoutError: if no client connects within timeout
+            RuntimeError: if pywin32 is not available
+        """
+        import threading
+
+        if not self._pywin32:
+            raise RuntimeError("pywin32 not available")
+        if not self._handle:
+            # Recreate the pipe instance if a previous accept() timed out
+            # and destroyed the handle. This is safe even when a subprocess
+            # has already connected — the OS routes the new pipe instance
+            # to the client's waiting connection.
+            self._handle = self._win32pipe.CreateNamedPipe(
+                self.name,
+                self._win32pipe.PIPE_ACCESS_DUPLEX,
+                (
+                    self._win32pipe.PIPE_TYPE_BYTE |
+                    self._win32pipe.PIPE_READMODE_BYTE |
+                    self._win32pipe.PIPE_WAIT
+                ),
+                1,  # max instances
+                65536,  # out buffer size
+                65536,  # in buffer size
+                0,  # default timeout
+                None,
+            )
+            if self._handle == -1:
+                raise OSError(f"Failed to create named pipe: {self.name}")
+
+        done_event = threading.Event()
+        accept_error = [None]  # [Exception|None]
+
+        def _do_connect():
+            try:
+                self._win32pipe.ConnectNamedPipe(self._handle, None)
+                done_event.set()
+            except Exception as e:
+                accept_error[0] = e
+                done_event.set()
+
+        thread = threading.Thread(target=_do_connect, daemon=True)
+        thread.start()
+
+        if not done_event.wait(timeout=timeout):
+            # Timeout: cancel ConnectNamedPipe by closing the handle.
+            # We do NOT set _handle = None here any more — accept() now
+            # recreates the handle lazily on the next call, so the polling
+            # loop in _rpc_server_loop can retry without going into an
+            # error loop.  The OS also cleans up the half-open pipe state.
+            try:
+                self._win32file.CloseHandle(self._handle)
+            except Exception:
+                pass
+            self._handle = None   # signal next accept() to recreate
+            thread.join(timeout=0.5)
+            raise TimeoutError(
+                f"Named pipe accept timed out after {timeout}s. "
+                f"Ensure the client process started successfully."
+            )
+
+        thread.join(timeout=0.5)
+        if accept_error[0]:
+            raise accept_error[0]
+
         self._connected = True
         return (self, None)
     
@@ -346,21 +418,36 @@ class WindowsNamedPipeServer:
         """Send data through the pipe."""
         if not self._pywin32 or not self._handle:
             raise RuntimeError("Named pipe not connected")
-        
-        err, written = self._win32file.WriteFile(self._handle, data)
-        if err:
-            raise OSError(f"WriteFile failed with error {err}")
-        return written
-    
+
+        import pywintypes
+        try:
+            err, written = self._win32file.WriteFile(self._handle, data)
+            if err:
+                raise OSError(f"WriteFile failed with error {err}")
+            return written
+        except pywintypes.error as e:
+            # Error 109 (ERROR_BROKEN_PIPE) = other end closed the connection
+            if e.winerror == 109:
+                return 0
+            raise
+
     def recv(self, bufsize: int = 4096) -> bytes:
         """Receive data from the pipe."""
         if not self._pywin32 or not self._handle:
             raise RuntimeError("Named pipe not connected")
         
-        err, data = self._win32file.ReadFile(self._handle, bufsize)
-        if err:
-            raise OSError(f"ReadFile failed with error {err}")
-        return data
+        import pywintypes
+        try:
+            err, data = self._win32file.ReadFile(self._handle, bufsize)
+            if err:
+                raise OSError(f"ReadFile failed with error {err}")
+            return data
+        except pywintypes.error as e:
+            # Error 109 (ERROR_BROKEN_PIPE) means the other end closed the pipe
+            # Return empty bytes to signal end-of-stream (same as Unix recv returning 0)
+            if e.winerror == 109:
+                return b""
+            raise
     
     def close(self):
         """Close the named pipe."""
@@ -441,21 +528,36 @@ class WindowsNamedPipeClient:
         """Send data through the pipe."""
         if not self._pywin32 or not self._handle:
             raise RuntimeError("Named pipe not connected")
-        
-        err, written = self._win32file.WriteFile(self._handle, data)
-        if err:
-            raise OSError(f"WriteFile failed with error {err}")
-        return written
-    
+
+        import pywintypes
+        try:
+            err, written = self._win32file.WriteFile(self._handle, data)
+            if err:
+                raise OSError(f"WriteFile failed with error {err}")
+            return written
+        except pywintypes.error as e:
+            # Error 109 (ERROR_BROKEN_PIPE) = other end closed the connection
+            if e.winerror == 109:
+                return 0
+            raise
+
     def recv(self, bufsize: int = 4096) -> bytes:
         """Receive data from the pipe."""
         if not self._pywin32 or not self._handle:
             raise RuntimeError("Named pipe not connected")
         
-        err, data = self._win32file.ReadFile(self._handle, bufsize)
-        if err:
-            raise OSError(f"ReadFile failed with error {err}")
-        return data
+        import pywintypes
+        try:
+            err, data = self._win32file.ReadFile(self._handle, bufsize)
+            if err:
+                raise OSError(f"ReadFile failed with error {err}")
+            return data
+        except pywintypes.error as e:
+            # Error 109 (ERROR_BROKEN_PIPE) means the other end closed the pipe
+            # Return empty bytes to signal end-of-stream (same as Unix recv returning 0)
+            if e.winerror == 109:
+                return b""
+            raise
     
     def close(self):
         """Close the named pipe."""
