@@ -266,6 +266,21 @@ class LocalEnvironment(BaseEnvironment):
         super().__init__(cwd=cwd or os.getcwd(), timeout=timeout, env=env)
         self.init_session()
 
+    def _win_path_to_posix(self, win_path: str) -> str | None:
+        """Convert a Windows path to a POSIX path via cygpath (Git Bash/MSYS2).
+
+        Returns None if cygpath is unavailable or the conversion fails.
+        """
+        try:
+            posix = subprocess.check_output(
+                ["cygpath", "-u", win_path], text=True, stderr=subprocess.DEVNULL
+            ).strip()
+            if posix.startswith("/") and os.path.isdir(posix):
+                return posix
+        except (OSError, subprocess.CalledProcessError):
+            pass
+        return None
+
     def get_temp_dir(self) -> str:
         """Return a shell-safe writable temp dir for local execution.
 
@@ -277,19 +292,28 @@ class LocalEnvironment(BaseEnvironment):
         Check the environment configured for this backend first so callers can
         override the temp root explicitly (for example via terminal.env or a
         custom TMPDIR), then fall back to the host process environment.
+
+        Windows paths (C:\..., \\server\share) are converted to POSIX using
+        ``cygpath -u`` before being returned, so they are safe to embed in
+        bash redirection commands (bash interprets ``C:`` as a variable
+        assignment, not a drive letter — causing "No such file or directory").
         """
         for env_var in ("TMPDIR", "TMP", "TEMP"):
             candidate = self.env.get(env_var) or os.environ.get(env_var)
-# Accept both Unix (/path) and Windows (C:\path, \\server\share) paths
+        # Accept both Unix (/path) and Windows (C:\path, \\server\share) paths
         if candidate and candidate.startswith("/"):
             return candidate.rstrip("/") or "/"
         if candidate and (
             (len(candidate) >= 2 and candidate[1] == ":")
             or candidate.startswith("\\\\")
         ):
-            # Windows absolute path
-            if os.path.isdir(candidate) and os.access(candidate, os.W_OK | os.X_OK):
-                return candidate
+            # Windows absolute path — convert to POSIX so bash can use it safely
+            converted = self._win_path_to_posix(candidate)
+            if converted:
+                return converted
+            # cygpath unavailable: fall back to /tmp rather than returning a
+            # path that bash would misinterpret (C: treated as var assignment)
+            return "/tmp"
 
         # Try tempfile.gettempdir() as fallback
         candidate = tempfile.gettempdir()
@@ -299,8 +323,10 @@ class LocalEnvironment(BaseEnvironment):
             (len(candidate) >= 2 and candidate[1] == ":")
             or candidate.startswith("\\\\")
         ):
-            if os.path.isdir(candidate) and os.access(candidate, os.W_OK | os.X_OK):
-                return candidate
+            converted = self._win_path_to_posix(candidate)
+            if converted:
+                return converted
+            return "/tmp"
 
         # Last resort: /tmp (may not exist on Windows, but callers handle errors)
         return "/tmp"
