@@ -394,6 +394,7 @@ class ProcessRegistry:
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             preexec_fn=None if _IS_WINDOWS else os.setsid,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0) if _IS_WINDOWS else 0,
         )
 
         session.process = proc
