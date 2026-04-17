@@ -2772,6 +2772,13 @@ def save_env_value(key: str, value: str):
             lines = f.readlines()
         # Sanitize on every read: split concatenated keys, drop stale placeholders
         lines = _sanitize_env_lines(lines)
+    elif _IS_WINDOWS:
+        # Windows first-run defaults: disable CPR (ANSI escape sequences crash the
+        # Windows conhost progress bar) and exclude localhost from proxy passthrough.
+        lines = [
+            "NO_PROXY=localhost,127.0.0.1\n",
+            "PROMPT_TOOLKIT_NO_CPR=1\n",
+        ]
     
     # Find and update or append
     found = False
