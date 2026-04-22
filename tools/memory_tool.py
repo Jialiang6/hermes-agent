@@ -153,13 +153,15 @@ class MemoryStore:
             if fcntl:
                 fcntl.flock(fd, fcntl.LOCK_EX)
             elif msvcrt:
-                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                # Windows: msvcrt.locking() requires file descriptor (int), not file object
+                msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)
             yield
         finally:
             if fcntl:
                 fcntl.flock(fd, fcntl.LOCK_UN)
             elif msvcrt:
-                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                # Windows: msvcrt.locking() requires file descriptor (int), not file object
+                msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
             fd.close()
 
     @staticmethod
