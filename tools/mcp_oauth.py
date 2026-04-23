@@ -37,6 +37,7 @@ import json
 import logging
 import os
 import re
+from tools.windows_compat import secure_file
 import socket
 import sys
 import threading
@@ -160,7 +161,7 @@ def _write_json(path: Path, data: dict) -> None:
     tmp = path.with_suffix(".tmp")
     try:
         tmp.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
-        os.chmod(tmp, 0o600)
+        secure_file(str(tmp), 0o600)
         tmp.rename(path)
     except OSError:
         tmp.unlink(missing_ok=True)

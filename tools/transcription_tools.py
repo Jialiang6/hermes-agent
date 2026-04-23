@@ -33,7 +33,7 @@ from typing import Optional, Dict, Any
 from urllib.parse import urljoin
 
 from utils import is_truthy_value
-from tools.windows_compat import shell_quote
+from tools.windows_compat import shell_quote, detect_shell, get_shell_args, is_executable
 from tools.managed_tool_gateway import resolve_managed_tool_gateway
 from tools.tool_backend_helpers import managed_nous_tools_enabled, resolve_openai_audio_api_key
 
@@ -122,7 +122,7 @@ def _find_binary(binary_name: str) -> Optional[str]:
     """Find a local binary, checking common Homebrew/local prefixes as well as PATH."""
     for directory in COMMON_LOCAL_BIN_DIRS:
         candidate = Path(directory) / binary_name
-        if candidate.exists() and os.access(candidate, os.X_OK):
+        if candidate.exists() and is_executable(candidate):
             return str(candidate)
     return shutil.which(binary_name)
 
@@ -373,7 +373,12 @@ def _transcribe_local_command(file_path: str, model_name: str) -> Dict[str, Any]
                 language=shell_quote(language),
                 model=shell_quote(normalized_model),
             )
-            subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
+            # Use the platform-appropriate shell explicitly rather than
+            # shell=True (which always invokes cmd.exe on Windows and
+            # breaks POSIX-style quoting from shlex.quote).
+            shell_path = detect_shell()
+            shell_argv = [shell_path] + get_shell_args(shell_path, command)
+            subprocess.run(shell_argv, check=True, capture_output=True, text=True)
 
             txt_files = sorted(Path(output_dir).glob("*.txt"))
             if not txt_files:

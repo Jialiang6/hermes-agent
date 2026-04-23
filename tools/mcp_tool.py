@@ -82,7 +82,7 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
-from tools.windows_compat import safe_kill, get_text_open_kwargs
+from tools.windows_compat import safe_kill, get_text_open_kwargs, is_executable
 
 logger = logging.getLogger(__name__)
 
@@ -288,7 +288,7 @@ def _resolve_stdio_command(command: str, env: dict) -> tuple[str, dict]:
                 os.path.join(os.path.expanduser("~"), ".local", "bin", resolved_command),
             ]
             for candidate in candidates:
-                if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                if os.path.isfile(candidate) and is_executable(candidate):
                     resolved_command = candidate
                     break
 

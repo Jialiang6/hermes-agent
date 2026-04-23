@@ -589,6 +589,7 @@ from tools.terminal_tool import set_sudo_password_callback, set_approval_callbac
 from tools.skills_tool import set_secret_capture_callback
 from hermes_cli.callbacks import prompt_for_secret
 from tools.browser_tool import _emergency_cleanup_all_sessions as _cleanup_all_browsers
+from tools.windows_compat import create_symlink_or_copy as _create_symlink_or_copy
 
 # Guard to prevent cleanup from running multiple times on exit
 _cleanup_done = False
@@ -753,7 +754,7 @@ def _setup_worktree(repo_root: str = None) -> Optional[Dict[str, str]]:
                     # Symlink directories (faster, saves disk)
                     if not dst.exists():
                         dst.parent.mkdir(parents=True, exist_ok=True)
-                        os.symlink(str(src_resolved), str(dst))
+                        _create_symlink_or_copy(str(src_resolved), str(dst), target_is_directory=True)
         except Exception as e:
             logger.debug("Error copying .worktreeinclude entries: %s", e)
 

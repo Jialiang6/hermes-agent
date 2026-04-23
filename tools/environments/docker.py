@@ -14,6 +14,7 @@ import sys
 import uuid
 from typing import Optional
 
+from tools.windows_compat import is_executable
 from tools.environments.base import BaseEnvironment, _popen_bash
 from tools.environments.local import _HERMES_PROVIDER_ENV_BLOCKLIST
 
@@ -119,7 +120,7 @@ def find_docker() -> Optional[str]:
         return found
 
     for path in _DOCKER_SEARCH_PATHS:
-        if os.path.isfile(path) and os.access(path, os.X_OK):
+        if os.path.isfile(path) and is_executable(path):
             _docker_executable = path
             logger.info("Found docker at non-PATH location: %s", path)
             return path
@@ -523,7 +524,7 @@ class DockerEnvironment(BaseEnvironment):
                 container_id = probe.stdout.strip()
                 if container_id:
                     subprocess.run([docker, "rm", container_id],
-                                   capture_output=True, timeout=5)
+                                   capture_output=True, timeout=5, text=True)
                 _storage_opt_ok = True
             else:
                 _storage_opt_ok = False
@@ -547,13 +548,13 @@ class DockerEnvironment(BaseEnvironment):
                         try:
                             subprocess.run(
                                 [self._docker_exe, "stop", self._container_id],
-                                capture_output=True, timeout=60
+                                capture_output=True, timeout=60, text=True
                             )
                         except Exception:
                             try:
                                 subprocess.run(
                                     [self._docker_exe, "rm", "-f", self._container_id],
-                                    capture_output=True, timeout=10
+                                    capture_output=True, timeout=10, text=True
                                 )
                             except Exception:
                                 pass
@@ -580,7 +581,7 @@ class DockerEnvironment(BaseEnvironment):
                             try:
                                 subprocess.run(
                                     [self._docker_exe, "rm", "-f", self._container_id],
-                                    capture_output=True, timeout=10
+                                    capture_output=True, timeout=10, text=True
                                 )
                             except Exception:
                                 pass

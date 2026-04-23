@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import List, Optional
 
-from tools.windows_compat import get_text_open_kwargs, read_text_utf8, write_text_utf8
+from tools.windows_compat import get_text_open_kwargs, read_text_utf8, write_text_utf8, safe_kill
 
 _PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
@@ -199,23 +199,20 @@ def check_alias_collision(name: str) -> Optional[str]:
 
     # Check existing commands in PATH
     wrapper_dir = _get_wrapper_dir()
-    try:
-        result = subprocess.run(
-            ["which", name], capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0:
-            existing_path = result.stdout.strip()
-            # Allow overwriting our own wrappers
-            if existing_path == str(wrapper_dir / name):
-                try:
-                    content = read_text_utf8(wrapper_dir / name)
-                    if "hermes -p" in content:
-                        return None  # it's our wrapper, safe to overwrite
-                except Exception:
-                    pass
+    existing_path = shutil.which(name)
+    if existing_path is not None:
+        # Allow overwriting our own wrappers
+        if existing_path == str(wrapper_dir / name):
+            try:
+                content = read_text_utf8(wrapper_dir / name)
+                if "hermes -p" in content:
+                    pass  # it's our wrapper, safe to overwrite — fall through
+                else:
+                    return f"'{name}' conflicts with an existing command ({existing_path})"
+            except Exception:
+                return f"'{name}' conflicts with an existing command ({existing_path})"
+        else:
             return f"'{name}' conflicts with an existing command ({existing_path})"
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
 
     return None  # safe
 
@@ -665,7 +662,6 @@ def _cleanup_gateway_service(name: str, profile_dir: Path) -> None:
 
 def _stop_gateway_process(profile_dir: Path) -> None:
     """Stop a running gateway process via its PID file."""
-    import signal as _signal
     import time as _time
 
     pid_file = profile_dir / "gateway.pid"
@@ -676,18 +672,18 @@ def _stop_gateway_process(profile_dir: Path) -> None:
         raw = read_text_utf8(pid_file).strip()
         data = json.loads(raw) if raw.startswith("{") else {"pid": int(raw)}
         pid = int(data["pid"])
-        os.kill(pid, _signal.SIGTERM)
+        safe_kill(pid, "SIGTERM")
         # Wait up to 10s for graceful shutdown
         for _ in range(20):
             _time.sleep(0.5)
             try:
-                os.kill(pid, 0)
+                safe_kill(pid, 0)
             except ProcessLookupError:
                 print(f"✓ Gateway stopped (PID {pid})")
                 return
         # Force kill
         try:
-            os.kill(pid, _signal.SIGKILL)
+            safe_kill(pid, "SIGKILL")
         except ProcessLookupError:
             pass
         print(f"✓ Gateway force-stopped (PID {pid})")

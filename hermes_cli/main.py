@@ -2979,14 +2979,14 @@ def _build_web_ui(web_dir: Path, *, fatal: bool = False) -> bool:
             print("Install Node.js, then run:  cd web && npm install && npm run build")
         return not fatal
     print("→ Building web UI...")
-    r1 = subprocess.run([npm, "install", "--silent"], cwd=web_dir, capture_output=True)
+    r1 = subprocess.run([npm, "install", "--silent"], cwd=web_dir, capture_output=True, text=True)
     if r1.returncode != 0:
         print(f"  {'✗' if fatal else '⚠'} Web UI npm install failed"
               + ("" if fatal else " (hermes web will not be available)"))
         if fatal:
             print("  Run manually:  cd web && npm install && npm run build")
         return False
-    r2 = subprocess.run([npm, "run", "build"], cwd=web_dir, capture_output=True)
+    r2 = subprocess.run([npm, "run", "build"], cwd=web_dir, capture_output=True, text=True)
     if r2.returncode != 0:
         print(f"  {'✗' if fatal else '⚠'} Web UI build failed"
               + ("" if fatal else " (hermes web will not be available)"))
@@ -3083,7 +3083,7 @@ def _update_via_zip(args):
         # ensurepip before trying the editable install.
         pip_cmd = [sys.executable, "-m", "pip"]
         try:
-            subprocess.run(pip_cmd + ["--version"], cwd=PROJECT_ROOT, check=True, capture_output=True)
+            subprocess.run(pip_cmd + ["--version"], cwd=PROJECT_ROOT, check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError:
             subprocess.run(
                 [sys.executable, "-m", "ensurepip", "--upgrade", "--default-pip"],
@@ -3140,7 +3140,7 @@ def _stash_local_changes_if_needed(git_cmd: list[str], cwd: Path) -> Optional[st
     )
     if unmerged.stdout.strip():
         print("→ Clearing unmerged index entries from a previous conflict...")
-        subprocess.run(git_cmd + ["reset"], cwd=cwd, capture_output=True)
+        subprocess.run(git_cmd + ["reset"], cwd=cwd, capture_output=True, text=True)
 
     from datetime import datetime, timezone
 
@@ -3648,7 +3648,7 @@ def cmd_update(args):
     if sys.platform == "win32" and git_dir.exists():
         subprocess.run(
             ["git", "-c", "windows.appendAtomically=false", "config", "windows.appendAtomically", "false"],
-            cwd=PROJECT_ROOT, check=False, capture_output=True
+            cwd=PROJECT_ROOT, check=False, capture_output=True, text=True
         )
 
     # Build git command once — reused for fork detection and the update itself.
@@ -3826,7 +3826,7 @@ def cmd_update(args):
             # ensurepip before trying the editable install.
             pip_cmd = [sys.executable, "-m", "pip"]
             try:
-                subprocess.run(pip_cmd + ["--version"], cwd=PROJECT_ROOT, check=True, capture_output=True)
+                subprocess.run(pip_cmd + ["--version"], cwd=PROJECT_ROOT, check=True, capture_output=True, text=True)
             except subprocess.CalledProcessError:
                 subprocess.run(
                     [sys.executable, "-m", "ensurepip", "--upgrade", "--default-pip"],

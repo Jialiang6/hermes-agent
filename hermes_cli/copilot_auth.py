@@ -18,7 +18,7 @@ Credential search order (matching Copilot CLI behaviour):
 
 from __future__ import annotations
 
-from tools.windows_compat import decode_utf8
+from tools.windows_compat import decode_utf8, is_executable
 
 import json
 import logging
@@ -112,7 +112,7 @@ def _gh_cli_candidates() -> list[str]:
     ):
         if candidate in candidates:
             continue
-        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+        if os.path.isfile(candidate) and is_executable(candidate):
             candidates.append(candidate)
 
     return candidates

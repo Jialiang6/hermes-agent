@@ -25,6 +25,7 @@ from hermes_cli.nous_subscription import (
     get_nous_subscription_features,
 )
 from tools.tool_backend_helpers import managed_nous_tools_enabled
+from tools.windows_compat import exec_replace
 from hermes_constants import get_optional_skills_dir
 
 logger = logging.getLogger(__name__)
@@ -2986,7 +2987,7 @@ def _offer_launch_chat():
         print_info("Could not relaunch Hermes automatically. Run 'hermes chat' manually.")
         return
 
-    os.execvp(chat_argv[0], chat_argv)
+    exec_replace(chat_argv)
 
 
 def _run_first_time_quick_setup(config: dict, hermes_home, is_existing: bool):

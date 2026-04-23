@@ -35,7 +35,7 @@ from hermes_cli.setup import (
     prompt, prompt_choice, prompt_yes_no,
 )
 from hermes_cli.colors import Colors, color
-from tools.windows_compat import safe_kill, write_text_utf8
+from tools.windows_compat import safe_kill, write_text_utf8, read_text_utf8, get_uid, get_euid
 
 
 # =============================================================================
@@ -108,6 +108,22 @@ def _get_service_pids() -> set:
 def _get_parent_pid(pid: int) -> int | None:
     """Return the parent PID for ``pid``, or ``None`` when unavailable."""
     if pid <= 1:
+        return None
+    if is_windows():
+        try:
+            result = subprocess.run(
+                ["wmic", "process", "where", f"ProcessId={pid}", "get", "ParentProcessId", "/VALUE"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if line.startswith("ParentProcessId="):
+                    ppid = int(line.split("=", 1)[1].strip())
+                    return ppid if ppid > 0 else None
+        except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
+            return None
         return None
     try:
         result = subprocess.run(
@@ -462,7 +478,7 @@ def _ensure_user_systemd_env() -> None:
     We detect the standard socket path and set the vars so all subsequent
     subprocess calls inherit them.
     """
-    uid = os.getuid()
+    uid = get_uid()
     if "XDG_RUNTIME_DIR" not in os.environ:
         runtime_dir = f"/run/user/{uid}"
         if Path(runtime_dir).exists():
@@ -536,7 +552,7 @@ def print_systemd_scope_conflict_warning() -> None:
 
 
 def _require_root_for_system_service(action: str) -> None:
-    if os.geteuid() != 0:
+    if get_euid() != 0:
         print(f"System gateway {action} requires root. Re-run with sudo.")
         sys.exit(1)
 
@@ -544,7 +560,10 @@ def _require_root_for_system_service(action: str) -> None:
 def _system_service_identity(run_as_user: str | None = None) -> tuple[str, str, str]:
     import getpass
     import grp
-    import pwd
+    try:
+        import pwd
+    except ImportError:
+        pwd = None  # type: ignore[assignment]
 
     username = (run_as_user or os.getenv("SUDO_USER") or os.getenv("USER") or os.getenv("LOGNAME") or getpass.getuser()).strip()
     if not username:
@@ -555,6 +574,8 @@ def _system_service_identity(run_as_user: str | None = None) -> tuple[str, str, 
         print_warning("Installing gateway service to run as root.")
         print_info("  This is fine for LXC/container environments but not recommended on bare-metal hosts.")
 
+    if pwd is None:
+        raise ValueError("pwd module not available on this platform")
     try:
         user_info = pwd.getpwnam(username)
     except KeyError as e:
@@ -602,7 +623,7 @@ def install_linux_gateway_from_setup(force: bool = False) -> tuple[str | None, b
 
     if scope == "system":
         run_as_user = _default_system_service_user()
-        if os.geteuid() != 0:
+        if get_euid() != 0:
             print_warning("  System service install requires sudo, so Hermes can't create it from this user session.")
             if run_as_user:
                 print_info(f"  After setup, run: sudo hermes gateway install --system --run-as-user {run_as_user}")
@@ -648,7 +669,7 @@ def get_systemd_linger_status() -> tuple[bool | None, str]:
     if not username:
         try:
             import pwd
-            username = pwd.getpwuid(os.getuid()).pw_name
+            username = pwd.getpwuid(get_uid()).pw_name
         except Exception:
             return None, "could not determine current user"
 
@@ -696,9 +717,11 @@ def _launchd_user_home() -> Path:
     Profile-mode Hermes often sets ``HOME`` to a profile-scoped directory, but
     launchd user agents still live under the actual account home.
     """
-    import pwd
-
-    return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    try:
+        import pwd
+        return Path(pwd.getpwuid(get_uid()).pw_dir)
+    except (ImportError, AttributeError):
+        return Path.home()
 
 
 def get_launchd_plist_path() -> Path:
@@ -845,7 +868,7 @@ def generate_systemd_unit(system: bool = False, run_as_user: str | None = None) 
         path_entries = [_remap_path_for_user(p, home_dir) for p in path_entries]
         path_entries.extend(_build_user_local_paths(Path(home_dir), path_entries))
         path_entries.extend(common_bin_paths)
-        sane_path = ":".join(path_entries)
+        sane_path = os.pathsep.join(path_entries)
         return f"""[Unit]
 Description={SERVICE_DESCRIPTION}
 After=network-online.target
@@ -883,7 +906,7 @@ WantedBy=multi-user.target
     profile_arg = _profile_arg(hermes_home)
     path_entries.extend(_build_user_local_paths(Path.home(), path_entries))
     path_entries.extend(common_bin_paths)
-    sane_path = ":".join(path_entries)
+    sane_path = os.pathsep.join(path_entries)
     return f"""[Unit]
 Description={SERVICE_DESCRIPTION}
 After=network.target
@@ -1218,7 +1241,7 @@ def get_launchd_label() -> str:
 
 def _launchd_domain() -> str:
     import os
-    return f"gui/{os.getuid()}"
+    return f"gui/{get_uid()}"
 
 
 def generate_launchd_plist() -> str:
@@ -1246,8 +1269,8 @@ def generate_launchd_plist() -> str:
         resolved_node_dir = str(Path(resolved_node).resolve().parent)
         if resolved_node_dir not in priority_dirs:
             priority_dirs.append(resolved_node_dir)
-    sane_path = ":".join(
-        dict.fromkeys(priority_dirs + [p for p in os.environ.get("PATH", "").split(":") if p])
+    sane_path = os.pathsep.join(
+        dict.fromkeys(priority_dirs + [p for p in os.environ.get("PATH", "").split(os.pathsep) if p])
     )
 
     # Build ProgramArguments array, including --profile when using a named profile
@@ -1530,7 +1553,12 @@ def launchd_status(deep: bool = False):
         if log_file.exists():
             print()
             print("Recent logs:")
-            subprocess.run(["tail", "-20", str(log_file)], timeout=10)
+            try:
+                content = read_text_utf8(log_file)
+                for line in content.splitlines()[-20:]:
+                    print(line)
+            except OSError:
+                pass
 
 
 # =============================================================================

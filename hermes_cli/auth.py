@@ -1082,7 +1082,10 @@ def _save_qwen_cli_tokens(tokens: Dict[str, Any]) -> Path:
     auth_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = auth_path.with_suffix(".tmp")
     tmp_path.write_text(json.dumps(tokens, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
+    try:
+        os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
+    except (OSError, NotImplementedError):
+        pass  # Windows doesn't support Unix permission bits
     tmp_path.replace(auth_path)
     return auth_path
 

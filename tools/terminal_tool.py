@@ -230,10 +230,11 @@ def _prompt_for_sudo_password(timeout_seconds: int = 45) -> str:
     
     def read_password_thread():
         """Read password with echo disabled. Uses msvcrt on Windows, /dev/tty on Unix."""
+        from tools.windows_compat import is_windows
         tty_fd = None
         old_attrs = None
         try:
-            if platform.system() == "Windows":
+            if is_windows():
                 import msvcrt
                 chars = []
                 while True:

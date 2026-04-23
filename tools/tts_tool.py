@@ -153,11 +153,11 @@ def _convert_to_opus(mp3_path: str) -> Optional[str]:
         result = subprocess.run(
             ["ffmpeg", "-i", mp3_path, "-acodec", "libopus",
              "-ac", "1", "-b:a", "64k", "-vbr", "off", ogg_path, "-y"],
-            capture_output=True, timeout=30,
+            capture_output=True, timeout=30, text=True,
         )
         if result.returncode != 0:
             logger.warning("ffmpeg conversion failed with return code %d: %s", 
-                          result.returncode, result.stderr.decode('utf-8', errors='ignore')[:200])
+                          result.returncode, (result.stderr or '')[:200])
             return None
         if os.path.exists(ogg_path) and os.path.getsize(ogg_path) > 0:
             return ogg_path

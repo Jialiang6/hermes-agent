@@ -29,7 +29,7 @@ import shutil
 import stat
 import subprocess
 
-from tools.windows_compat import get_text_open_kwargs
+from tools.windows_compat import get_text_open_kwargs, is_executable
 import tarfile
 import tempfile
 import threading
@@ -363,7 +363,17 @@ def _install_tirith(*, log_failures: bool = True) -> tuple[str | None, str]:
         src = os.path.join(tmpdir, "tirith")
         dest = os.path.join(_hermes_bin_dir(), "tirith")
         shutil.move(src, dest)
-        os.chmod(dest, os.stat(dest).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        # Make the tirith binary executable.
+        # On Unix: set execute permission bits via os.chmod.
+        # On Windows: os.chmod cannot set execute bits and os.stat().st_mode
+        # does not carry meaningful Unix permissions.  On Windows, executability
+        # is determined by the file extension (PATHEXT), so skipping this call
+        # is safe — the binary will still be runnable if it has an appropriate
+        # extension (.exe, .bat, .cmd).
+        try:
+            os.chmod(dest, os.stat(dest).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        except (OSError, NotImplementedError):
+            logger.debug("Could not set execute permission on %s (expected on Windows)", dest)
 
         verification = "cosign + SHA-256" if cosign_verified else "SHA-256 only"
         logger.info("tirith installed to %s (%s)", dest, verification)
@@ -405,7 +415,7 @@ def _resolve_tirith_path(configured_path: str) -> str:
 
     # Explicit path: check it and stop. Never auto-download a replacement.
     if explicit:
-        if os.path.isfile(expanded) and os.access(expanded, os.X_OK):
+        if os.path.isfile(expanded) and is_executable(expanded):
             _resolved_path = expanded
             return expanded
         # Also try shutil.which in case it's a bare name on PATH
@@ -429,7 +439,7 @@ def _resolve_tirith_path(configured_path: str) -> str:
         return found
 
     hermes_bin = os.path.join(_hermes_bin_dir(), "tirith")
-    if os.path.isfile(hermes_bin) and os.access(hermes_bin, os.X_OK):
+    if os.path.isfile(hermes_bin) and is_executable(hermes_bin):
         _resolved_path = hermes_bin
         _install_failure_reason = ""
         _clear_install_failed()
@@ -493,7 +503,7 @@ def _background_install(*, log_failures: bool = True):
             return
 
         hermes_bin = os.path.join(_hermes_bin_dir(), "tirith")
-        if os.path.isfile(hermes_bin) and os.access(hermes_bin, os.X_OK):
+        if os.path.isfile(hermes_bin) and is_executable(hermes_bin):
             _resolved_path = hermes_bin
             _install_failure_reason = ""
             return
@@ -525,7 +535,7 @@ def ensure_installed(*, log_failures: bool = True):
     # Already resolved from a previous call
     if _resolved_path is not None and _resolved_path is not _INSTALL_FAILED:
         path = _resolved_path
-        if os.path.isfile(path) and os.access(path, os.X_OK):
+        if os.path.isfile(path) and is_executable(path):
             return path
         return None
 
@@ -535,7 +545,7 @@ def ensure_installed(*, log_failures: bool = True):
 
     # Explicit path: synchronous check only, no download
     if explicit:
-        if os.path.isfile(expanded) and os.access(expanded, os.X_OK):
+        if os.path.isfile(expanded) and is_executable(expanded):
             _resolved_path = expanded
             return expanded
         found = shutil.which(expanded)
@@ -555,7 +565,7 @@ def ensure_installed(*, log_failures: bool = True):
         return found
 
     hermes_bin = os.path.join(_hermes_bin_dir(), "tirith")
-    if os.path.isfile(hermes_bin) and os.access(hermes_bin, os.X_OK):
+    if os.path.isfile(hermes_bin) and is_executable(hermes_bin):
         _resolved_path = hermes_bin
         _install_failure_reason = ""
         _clear_install_failed()

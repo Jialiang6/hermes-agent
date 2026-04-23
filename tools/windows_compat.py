@@ -53,6 +53,12 @@ __all__ = [
     "configure_stdout_utf8", "get_subprocess_encoding_kwargs",
     # Path read/write UTF-8 wrappers
     "read_text_utf8", "write_text_utf8",
+    # Executable detection
+    "is_executable",
+    # Secure file permissions
+    "secure_file",
+    # User ID
+    "get_uid", "get_euid",
 ]
 
 # Platform detection
@@ -1475,3 +1481,136 @@ def write_text_utf8(path, content: str, errors: str = "replace") -> int:
     """
     from pathlib import Path
     return Path(path).write_text(content, encoding="utf-8", errors=errors)
+
+
+# ---------------------------------------------------------------------------
+# Executable detection (os.access X_OK replacement)
+# ---------------------------------------------------------------------------
+
+_WINDOWS_EXECUTABLE_EXTENSIONS = {".exe", ".bat", ".cmd", ".ps1", ".com"}
+
+
+def is_executable(path: str) -> bool:
+    """Check if a path is executable, cross-platform.
+
+    On Unix, this uses os.access(path, os.X_OK).
+    On Windows, os.access(X_OK) always returns True for existing files,
+    which is incorrect. Windows determines executability by file extension.
+    This function checks for Windows executable extensions (.exe, .bat,
+    .cmd, .ps1, .com) on Windows, and falls back to os.access(X_OK) on Unix.
+
+    Args:
+        path: File path to check.
+
+    Returns:
+        True if the path appears to be executable.
+
+    Example:
+        if is_executable("/usr/bin/python"):
+            ...
+    """
+    from pathlib import Path
+    p = Path(path)
+    if not p.is_file():
+        return False
+    if is_windows():
+        return p.suffix.lower() in _WINDOWS_EXECUTABLE_EXTENSIONS
+    return os.access(str(p), os.X_OK)
+
+
+# ---------------------------------------------------------------------------
+# Secure file permissions (os.chmod replacement)
+# ---------------------------------------------------------------------------
+
+def secure_file(path: str, mode: int = 0o600) -> None:
+    """Restrict file access to owner only, cross-platform.
+
+    On Unix, this calls os.chmod(path, mode).
+    On Windows, os.chmod() only supports the read-only bit and cannot
+    restrict access to owner-only. Instead, this uses Windows ACLs
+    to remove inherited permissions and grant only the current user
+    full control. Falls back to os.chmod() if ACL manipulation fails.
+
+    Args:
+        path: File path to secure.
+        mode: Unix permission mode (default 0o600 = owner read/write).
+
+    Example:
+        secure_file(env_path)  # Restrict .env to owner-only
+    """
+    if is_windows():
+        try:
+            import subprocess
+            # Use icacls to remove inherited permissions and grant
+            # only the current user full control
+            # 1. Disable inheritance and remove all inherited ACEs
+            subprocess.run(
+                ["icacls", str(path), "/inheritance:r"],
+                capture_output=True, timeout=5,
+            )
+            # 2. Grant current user full control
+            import os as _os
+            username = _os.environ.get("USERNAME", "")
+            if username:
+                subprocess.run(
+                    ["icacls", str(path), "/grant", f"{username}:(F)"],
+                    capture_output=True, timeout=5,
+                )
+        except (OSError, subprocess.SubprocessError, FileNotFoundError):
+            # Fallback: try os.chmod — limited but better than nothing
+            try:
+                os.chmod(path, mode)
+            except (OSError, NotImplementedError):
+                pass
+    else:
+        try:
+            os.chmod(path, mode)
+        except (OSError, NotImplementedError):
+            pass
+
+
+# ---------------------------------------------------------------------------
+# User ID (os.getuid replacement)
+# ---------------------------------------------------------------------------
+
+def get_uid() -> int:
+    """Get the current user ID, cross-platform.
+
+    On Unix, returns os.getuid().
+    On Windows, os.getuid() does not exist. Returns 0 as a placeholder,
+    since Windows doesn't have numeric UIDs in the Unix sense.
+    If you need the Windows user identity, use os.environ["USERNAME"]
+    or getpass.getuser() instead.
+
+    Returns:
+        Integer user ID (0 on Windows).
+
+    Example:
+        uid = get_uid()  # Works on both Linux and Windows
+    """
+    if is_windows():
+        return 0
+    return os.getuid()
+
+
+def get_euid() -> int:
+    """Get the current effective user ID, cross-platform.
+
+    On Unix, returns os.geteuid().
+    On Windows, os.geteuid() does not exist. Returns 0 as a placeholder.
+
+    Returns:
+        Integer effective user ID (0 on Windows).
+
+    Example:
+        if get_euid() == 0:
+            print("Running as root/admin")
+    """
+    if is_windows():
+        # On Windows, check if running as administrator instead
+        try:
+            import ctypes
+            return 1 if ctypes.windll.shell32.IsUserAnAdmin() else 0
+        except (OSError, AttributeError):
+            return 0
+    return os.geteuid()
