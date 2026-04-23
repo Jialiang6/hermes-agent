@@ -20,7 +20,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from hermes_constants import get_hermes_home
-from tools.windows_compat import safe_kill, get_state_dir
+from tools.windows_compat import safe_kill, get_state_dir, read_text_utf8, write_text_utf8
 from typing import Any, Optional
 
 _GATEWAY_KIND = "hermes-gateway"
@@ -155,7 +155,7 @@ def _read_json_file(path: Path) -> Optional[dict[str, Any]]:
     if not path.exists():
         return None
     try:
-        raw = path.read_text().strip()
+        raw = read_text_utf8(path).strip()
     except OSError:
         return None
     if not raw:
@@ -169,7 +169,7 @@ def _read_json_file(path: Path) -> Optional[dict[str, Any]]:
 
 def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload))
+    write_text_utf8(path, json.dumps(payload))
 
 
 def _read_pid_record() -> Optional[dict]:
@@ -177,7 +177,7 @@ def _read_pid_record() -> Optional[dict]:
     if not pid_path.exists():
         return None
 
-    raw = pid_path.read_text().strip()
+    raw = read_text_utf8(pid_path).strip()
     if not raw:
         return None
 

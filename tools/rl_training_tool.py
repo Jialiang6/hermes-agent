@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from hermes_constants import get_hermes_home
+from tools.windows_compat import get_text_open_kwargs, decode_utf8
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +170,7 @@ def _scan_environments() -> List[EnvironmentInfo]:
             continue
         
         try:
-            with open(py_file, "r") as f:
+            with open(py_file, **get_text_open_kwargs("r")) as f:
                 tree = ast.parse(f.read())
             
             for node in ast.walk(tree):
@@ -333,7 +334,7 @@ async def _spawn_training_run(run_state: RunState, config_path: Path):
         
         # File must stay open while the subprocess runs; we store the handle
         # on run_state so _stop_training_run() can close it when done.
-        api_log_file = open(api_log, "w")  # closed by _stop_training_run
+        api_log_file = open(api_log, **get_text_open_kwargs("w"))  # closed by _stop_training_run
         run_state.api_log_file = api_log_file
         run_state.api_process = subprocess.Popen(
             ["run-api"],
@@ -356,7 +357,7 @@ async def _spawn_training_run(run_state: RunState, config_path: Path):
         # Step 2: Start the Tinker trainer
         logger.info("[%s] Starting Tinker trainer: launch_training.py --config %s", run_id, config_path)
         
-        trainer_log_file = open(trainer_log, "w")  # closed by _stop_training_run
+        trainer_log_file = open(trainer_log, **get_text_open_kwargs("w"))  # closed by _stop_training_run
         run_state.trainer_log_file = trainer_log_file
         run_state.trainer_process = subprocess.Popen(
             [sys.executable, "launch_training.py", "--config", str(config_path)],
@@ -397,7 +398,7 @@ async def _spawn_training_run(run_state: RunState, config_path: Path):
         
         logger.info("[%s] Starting environment: %s serve", run_id, env_info.file_path)
         
-        env_log_file = open(env_log, "w")  # closed by _stop_training_run
+        env_log_file = open(env_log, **get_text_open_kwargs("w"))  # closed by _stop_training_run
         run_state.env_log_file = env_log_file
         run_state.env_process = subprocess.Popen(
             [sys.executable, str(env_info.file_path), "serve", "--config", str(config_path)],
@@ -777,7 +778,7 @@ async def rl_start_training() -> str:
     if "wandb_name" in _current_config and _current_config["wandb_name"]:
         run_config["env"]["wandb_name"] = _current_config["wandb_name"]
     
-    with open(config_path, "w") as f:
+    with open(config_path, **get_text_open_kwargs("w")) as f:
         yaml.dump(run_config, f, default_flow_style=False)
     
     # Create run state
@@ -1180,7 +1181,7 @@ async def rl_test_inference(
                     line = await stream.readline()
                     if not line:
                         break
-                    decoded = line.decode().rstrip()
+                    decoded = decode_utf8(line).rstrip()
                     lines_list.append(decoded)
                     # Print progress-related lines in real-time
                     if any(kw in decoded.lower() for kw in ['processing', 'group', 'step', 'progress', '%', 'completed']):
@@ -1206,7 +1207,7 @@ async def rl_test_inference(
             stderr_text = "\n".join(stderr_lines)
             
             # Write logs to files for inspection outside CLI
-            with open(log_file, "w") as f:
+            with open(log_file, **get_text_open_kwargs("w")) as f:
                 f.write(f"Command: {cmd_display}\n")
                 f.write(f"Working dir: {TINKER_ATROPOS_ROOT}\n")
                 f.write(f"Return code: {process.returncode}\n")
@@ -1238,7 +1239,7 @@ async def rl_test_inference(
                 # Parse the output JSONL file
                 if output_file.exists():
                     # Read JSONL file (one JSON object per line = one step)
-                    with open(output_file, "r") as f:
+                    with open(output_file, **get_text_open_kwargs("r")) as f:
                         for line in f:
                             line = line.strip()
                             if not line:

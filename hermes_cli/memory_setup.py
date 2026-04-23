@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from hermes_constants import get_hermes_home
+from tools.windows_compat import decode_utf8, get_text_open_kwargs, read_text_utf8, write_text_utf8
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +68,7 @@ def _install_dependencies(provider_name: str) -> None:
 
     try:
         import yaml
-        with open(yaml_path) as f:
+        with open(yaml_path, **get_text_open_kwargs()) as f:
             meta = yaml.safe_load(f) or {}
     except Exception:
         return
@@ -115,7 +116,7 @@ def _install_dependencies(provider_name: str) -> None:
         print(f"  ✓ Installed {', '.join(missing)}")
     except subprocess.CalledProcessError as e:
         print(f"  ⚠ Failed to install {', '.join(missing)}")
-        stderr = (e.stderr or b"").decode()[:200]
+        stderr = decode_utf8(e.stderr or b"")[:200]
         if stderr:
             print(f"    {stderr}")
         print(f"  Run manually: uv pip install --python {sys.executable} {' '.join(missing)}")
@@ -356,7 +357,7 @@ def _write_env_vars(env_path: Path, env_writes: dict) -> None:
 
     existing_lines = []
     if env_path.exists():
-        existing_lines = env_path.read_text().splitlines()
+        existing_lines = read_text_utf8(env_path).splitlines()
 
     updated_keys = set()
     new_lines = []
@@ -372,7 +373,7 @@ def _write_env_vars(env_path: Path, env_writes: dict) -> None:
         if key not in updated_keys:
             new_lines.append(f"{key}={val}")
 
-    env_path.write_text("\n".join(new_lines) + "\n")
+    write_text_utf8(env_path, "\n".join(new_lines) + "\n")
 
 
 # ---------------------------------------------------------------------------

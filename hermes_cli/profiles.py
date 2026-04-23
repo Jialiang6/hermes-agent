@@ -30,6 +30,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import List, Optional
 
+from tools.windows_compat import get_text_open_kwargs, read_text_utf8, write_text_utf8
+
 _PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 # Directories bootstrapped inside every new profile
@@ -206,7 +208,7 @@ def check_alias_collision(name: str) -> Optional[str]:
             # Allow overwriting our own wrappers
             if existing_path == str(wrapper_dir / name):
                 try:
-                    content = (wrapper_dir / name).read_text()
+                    content = read_text_utf8(wrapper_dir / name)
                     if "hermes -p" in content:
                         return None  # it's our wrapper, safe to overwrite
                 except Exception:
@@ -246,7 +248,7 @@ def create_wrapper_script(name: str) -> Optional[Path]:
         wrapper_path = wrapper_dir / f"{name}.cmd"
         try:
             # Windows batch file: pass all arguments via %*
-            wrapper_path.write_text(f'@echo off\nhermes -p {name} %*\n')
+            write_text_utf8(wrapper_path, f'@echo off\nhermes -p {name} %*\n')
             return wrapper_path
         except OSError as e:
             print(f"⚠ Could not create wrapper at {wrapper_path}: {e}")
@@ -254,7 +256,7 @@ def create_wrapper_script(name: str) -> Optional[Path]:
     else:
         wrapper_path = wrapper_dir / name
         try:
-            wrapper_path.write_text(f'#!/bin/sh\nexec hermes -p {name} "$@"\n')
+            write_text_utf8(wrapper_path, f'#!/bin/sh\nexec hermes -p {name} "$@"\n')
             wrapper_path.chmod(wrapper_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
             return wrapper_path
         except OSError as e:
@@ -268,7 +270,7 @@ def remove_wrapper_script(name: str) -> bool:
     if wrapper_path.exists():
         try:
             # Verify it's our wrapper before removing
-            content = wrapper_path.read_text()
+            content = read_text_utf8(wrapper_path)
             if "hermes -p" in content:
                 wrapper_path.unlink()
                 return True
@@ -302,7 +304,7 @@ def _read_config_model(profile_dir: Path) -> tuple:
         return None, None
     try:
         import yaml
-        with open(config_path, "r") as f:
+        with open(config_path, "r", **get_text_open_kwargs()) as f:
             cfg = yaml.safe_load(f) or {}
         model_cfg = cfg.get("model", {})
         if isinstance(model_cfg, str):
@@ -320,7 +322,7 @@ def _check_gateway_running(profile_dir: Path) -> bool:
     if not pid_file.exists():
         return False
     try:
-        raw = pid_file.read_text().strip()
+        raw = read_text_utf8(pid_file).strip()
         if not raw:
             return False
         data = json.loads(raw) if raw.startswith("{") else {"pid": int(raw)}
@@ -671,7 +673,7 @@ def _stop_gateway_process(profile_dir: Path) -> None:
         return
 
     try:
-        raw = pid_file.read_text().strip()
+        raw = read_text_utf8(pid_file).strip()
         data = json.loads(raw) if raw.startswith("{") else {"pid": int(raw)}
         pid = int(data["pid"])
         os.kill(pid, _signal.SIGTERM)
@@ -706,7 +708,7 @@ def get_active_profile() -> str:
     """
     path = _get_active_profile_path()
     try:
-        name = path.read_text().strip()
+        name = read_text_utf8(path).strip()
         if not name:
             return "default"
         return name
@@ -734,7 +736,7 @@ def set_active_profile(name: str) -> None:
     else:
         # Atomic write
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(name + "\n")
+        write_text_utf8(tmp, name + "\n")
         tmp.replace(path)
 
 

@@ -50,6 +50,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from tools.windows_compat import read_text_utf8, write_text_utf8
+
 def _require_tty(command_name: str) -> None:
     """Exit with a clear error if stdin is not a terminal.
 
@@ -103,7 +105,7 @@ def _apply_profile_override() -> None:
             from hermes_constants import get_default_hermes_root
             active_path = get_default_hermes_root() / "active_profile"
             if active_path.exists():
-                name = active_path.read_text().strip()
+                name = read_text_utf8(active_path).strip()
                 if name and name != "default":
                     profile_name = name
                     consume = 0  # don't strip anything from argv
@@ -229,7 +231,7 @@ def _has_any_provider_configured() -> bool:
     env_file = get_env_path()
     if env_file.exists():
         try:
-            for line in env_file.read_text().splitlines():
+            for line in read_text_utf8(env_file).splitlines():
                 line = line.strip()
                 if line.startswith("#") or "=" not in line:
                     continue
@@ -256,7 +258,7 @@ def _has_any_provider_configured() -> bool:
     if auth_file.exists():
         try:
             import json
-            auth = json.loads(auth_file.read_text())
+            auth = json.loads(read_text_utf8(auth_file))
             active = auth.get("active_provider")
             if active:
                 status = get_auth_status(active)
@@ -2933,7 +2935,7 @@ def _gateway_prompt(prompt_text: str, default: str = "", timeout: float = 300.0)
         "id": str(_uuid.uuid4()),
     }
     tmp = prompt_path.with_suffix(".tmp")
-    tmp.write_text(_json.dumps(payload))
+    write_text_utf8(tmp, _json.dumps(payload))
     tmp.replace(prompt_path)
 
     # Poll for response
@@ -2942,7 +2944,7 @@ def _gateway_prompt(prompt_text: str, default: str = "", timeout: float = 300.0)
     while _time.monotonic() < deadline:
         if response_path.exists():
             try:
-                answer = response_path.read_text().strip()
+                answer = read_text_utf8(response_path).strip()
                 response_path.unlink(missing_ok=True)
                 prompt_path.unlink(missing_ok=True)
                 return answer if answer else default
@@ -3986,7 +3988,7 @@ def cmd_update(args):
         if gateway_mode:
             _exit_code_path = get_hermes_home() / ".update_exit_code"
             try:
-                _exit_code_path.write_text("0")
+                write_text_utf8(_exit_code_path, "0")
             except OSError:
                 pass
         
@@ -4357,9 +4359,9 @@ def cmd_profile(args):
                 if custom_name:
                     from tools.windows_compat import is_windows
                     if is_windows():
-                        wrapper_path.write_text(f'@echo off\nhermes -p {name} %*\n')
+                        write_text_utf8(wrapper_path, f'@echo off\nhermes -p {name} %*\n')
                     else:
-                        wrapper_path.write_text(f'#!/bin/sh\nexec hermes -p {name} "$@"\n')
+                        write_text_utf8(wrapper_path, f'#!/bin/sh\nexec hermes -p {name} "$@"\n')
                         import stat
                         wrapper_path.chmod(wrapper_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
                 print(f"✓ Alias created: {wrapper_path}")

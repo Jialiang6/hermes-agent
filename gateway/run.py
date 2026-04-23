@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from datetime import datetime
 
-from tools.windows_compat import is_windows, add_signal_handler
+from tools.windows_compat import is_windows, add_signal_handler, read_text_utf8, write_text_utf8
 from typing import Dict, Optional, Any, List
 
 # ---------------------------------------------------------------------------
@@ -655,7 +655,7 @@ class GatewayRunner:
 
     def _load_voice_modes(self) -> Dict[str, str]:
         try:
-            data = json.loads(self._VOICE_MODE_PATH.read_text())
+            data = json.loads(read_text_utf8(self._VOICE_MODE_PATH))
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return {}
 
@@ -672,7 +672,8 @@ class GatewayRunner:
     def _save_voice_modes(self) -> None:
         try:
             self._VOICE_MODE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            self._VOICE_MODE_PATH.write_text(
+            write_text_utf8(
+                self._VOICE_MODE_PATH,
                 json.dumps(self._voice_mode, indent=2)
             )
         except OSError as e:
@@ -2485,7 +2486,7 @@ class GatewayRunner:
                 response_path = _hermes_home / ".update_response"
                 try:
                     tmp = response_path.with_suffix(".tmp")
-                    tmp.write_text(response_text)
+                    write_text_utf8(tmp, response_text)
                     tmp.replace(response_path)
                 except OSError as e:
                     logger.warning("Failed to write update response: %s", e)
@@ -4191,7 +4192,8 @@ class GatewayRunner:
             }
             if event.source.thread_id:
                 notify_data["thread_id"] = event.source.thread_id
-            (_hermes_home / ".restart_notify.json").write_text(
+            write_text_utf8(
+                _hermes_home / ".restart_notify.json",
                 _json.dumps(notify_data)
             )
         except Exception as e:
@@ -6609,7 +6611,7 @@ class GatewayRunner:
             "timestamp": datetime.now().isoformat(),
         }
         _tmp_pending = pending_path.with_suffix(".tmp")
-        _tmp_pending.write_text(json.dumps(pending))
+        write_text_utf8(_tmp_pending, json.dumps(pending))
         _tmp_pending.replace(pending_path)
         exit_code_path.unlink(missing_ok=True)
 
@@ -6721,7 +6723,7 @@ class GatewayRunner:
         for path in (claimed_path, pending_path):
             if path.exists():
                 try:
-                    pending = json.loads(path.read_text())
+                    pending = json.loads(read_text_utf8(path))
                     platform_str = pending.get("platform")
                     chat_id = pending.get("chat_id")
                     session_key = pending.get("session_key")
@@ -6744,7 +6746,7 @@ class GatewayRunner:
                     return
                 await asyncio.sleep(poll_interval)
             if (pending_path.exists() or claimed_path.exists()) and not exit_code_path.exists():
-                exit_code_path.write_text("124")
+                write_text_utf8(exit_code_path, "124")
                 await self._send_update_notification()
             return
 
@@ -6782,7 +6784,7 @@ class GatewayRunner:
                 # Read any remaining output
                 if output_path.exists():
                     try:
-                        content = output_path.read_text()
+                        content = read_text_utf8(output_path)
                         if len(content) > bytes_sent:
                             buffer += content[bytes_sent:]
                             bytes_sent = len(content)
@@ -6792,7 +6794,7 @@ class GatewayRunner:
 
                 # Send final status
                 try:
-                    exit_code_raw = exit_code_path.read_text().strip() or "1"
+                    exit_code_raw = read_text_utf8(exit_code_path).strip() or "1"
                     exit_code = int(exit_code_raw)
                     if exit_code == 0:
                         await adapter.send(chat_id, "✅ Hermes update finished.")
@@ -6813,7 +6815,7 @@ class GatewayRunner:
             # Check for new output
             if output_path.exists():
                 try:
-                    content = output_path.read_text()
+                    content = read_text_utf8(output_path)
                     if len(content) > bytes_sent:
                         buffer += content[bytes_sent:]
                         bytes_sent = len(content)
@@ -6831,7 +6833,7 @@ class GatewayRunner:
             if (prompt_path.exists() and session_key
                     and not self._update_prompt_pending.get(session_key)):
                 try:
-                    prompt_data = json.loads(prompt_path.read_text())
+                    prompt_data = json.loads(read_text_utf8(prompt_path))
                     prompt_text = prompt_data.get("prompt", "")
                     default = prompt_data.get("default", "")
                     if prompt_text:
@@ -6875,7 +6877,7 @@ class GatewayRunner:
         # Timeout
         if not exit_code_path.exists():
             logger.warning("Update watcher timed out after %.0fs", timeout)
-            exit_code_path.write_text("124")
+            write_text_utf8(exit_code_path, "124")
             await _flush_buffer()
             try:
                 await adapter.send(chat_id, "❌ Hermes update timed out after 30 minutes.")
@@ -6920,7 +6922,7 @@ class GatewayRunner:
             elif not claimed_path.exists():
                 return True
 
-            pending = json.loads(claimed_path.read_text())
+            pending = json.loads(read_text_utf8(claimed_path))
             platform_str = pending.get("platform")
             chat_id = pending.get("chat_id")
 
@@ -6931,13 +6933,13 @@ class GatewayRunner:
                 claimed_path.replace(pending_path)
                 return False
 
-            exit_code_raw = exit_code_path.read_text().strip() or "1"
+            exit_code_raw = read_text_utf8(exit_code_path).strip() or "1"
             exit_code = int(exit_code_raw)
 
             # Read the captured update output
             output = ""
             if output_path.exists():
-                output = output_path.read_text()
+                output = read_text_utf8(output_path)
 
             # Resolve adapter
             platform = Platform(platform_str)
@@ -6985,7 +6987,7 @@ class GatewayRunner:
             return
 
         try:
-            data = _json.loads(notify_path.read_text())
+            data = _json.loads(read_text_utf8(notify_path))
             platform_str = data.get("platform")
             chat_id = data.get("chat_id")
             thread_id = data.get("thread_id")

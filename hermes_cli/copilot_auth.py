@@ -18,6 +18,8 @@ Credential search order (matching Copilot CLI behaviour):
 
 from __future__ import annotations
 
+from tools.windows_compat import decode_utf8
+
 import json
 import logging
 import os
@@ -189,7 +191,7 @@ def copilot_device_code_login(
 
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            device_data = json.loads(resp.read().decode())
+            device_data = json.loads(decode_utf8(resp.read()))
     except Exception as exc:
         logger.error("Failed to initiate device authorization: %s", exc)
         print(f"  ✗ Failed to start device authorization: {exc}")
@@ -235,7 +237,7 @@ def copilot_device_code_login(
 
         try:
             with urllib.request.urlopen(poll_req, timeout=10) as resp:
-                result = json.loads(resp.read().decode())
+                result = json.loads(decode_utf8(resp.read()))
         except Exception:
             print(".", end="", flush=True)
             continue

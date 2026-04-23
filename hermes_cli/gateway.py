@@ -35,7 +35,7 @@ from hermes_cli.setup import (
     prompt, prompt_choice, prompt_yes_no,
 )
 from hermes_cli.colors import Colors, color
-from tools.windows_compat import safe_kill
+from tools.windows_compat import safe_kill, write_text_utf8
 
 
 # =============================================================================
@@ -1355,7 +1355,7 @@ def launchd_install(force: bool = False):
     
     plist_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"Installing launchd service to: {plist_path}")
-    plist_path.write_text(generate_launchd_plist())
+    write_text_utf8(plist_path, generate_launchd_plist())
     
     subprocess.run(["launchctl", "bootstrap", _launchd_domain(), str(plist_path)], check=True, timeout=30)
     

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Any
 
 from hermes_cli.config import get_hermes_home
+from tools.windows_compat import write_text_utf8
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +206,7 @@ class DeliveryRouter:
         lines.append("")
         lines.append(content)
         
-        output_path.write_text("\n".join(lines))
+        write_text_utf8(output_path, "\n".join(lines))
         
         return {
             "path": str(output_path),
@@ -218,7 +219,7 @@ class DeliveryRouter:
         out_dir = get_hermes_home() / "cron" / "output"
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / f"{job_id}_{timestamp}.txt"
-        path.write_text(content)
+        write_text_utf8(path, content)
         return path
 
     async def _deliver_to_platform(

@@ -87,6 +87,8 @@ from tools.windows_compat import (
     safe_kill,
     join_path_list,
     get_sane_path_str,
+    get_text_open_kwargs,
+    read_text_utf8,
 )
 
 # Camofox local anti-detection browser backend (optional).
@@ -541,7 +543,7 @@ def _reap_orphaned_browser_sessions():
             continue
 
         try:
-            daemon_pid = int(Path(pid_file).read_text().strip())
+            daemon_pid = int(read_text_utf8(Path(pid_file)).strip())
         except (ValueError, OSError):
             shutil.rmtree(socket_dir, ignore_errors=True)
             continue
@@ -1122,9 +1124,9 @@ def _run_browser_command(
                            command, timeout, task_id, task_socket_dir)
             return {"success": False, "error": f"Command timed out after {timeout} seconds"}
 
-        with open(stdout_path, "r") as f:
+        with open(stdout_path, "r", **get_text_open_kwargs()) as f:
             stdout = f.read()
-        with open(stderr_path, "r") as f:
+        with open(stderr_path, "r", **get_text_open_kwargs()) as f:
             stderr = f.read()
         returncode = proc.returncode
 
@@ -2205,7 +2207,7 @@ def cleanup_browser(task_id: Optional[str] = None) -> None:
                 pid_file = os.path.join(socket_dir, f"{session_name}.pid")
                 if os.path.isfile(pid_file):
                     try:
-                        daemon_pid = int(Path(pid_file).read_text().strip())
+                        daemon_pid = int(read_text_utf8(Path(pid_file)).strip())
                         safe_kill(daemon_pid, "SIGTERM")
                         logger.debug("Killed daemon pid %s for %s", daemon_pid, session_name)
                     except (ProcessLookupError, ValueError, PermissionError, OSError):

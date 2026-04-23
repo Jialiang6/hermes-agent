@@ -21,6 +21,7 @@ from collections import defaultdict
 from typing import Callable, Dict, Optional, Any
 
 logger = logging.getLogger(__name__)
+from tools.windows_compat import write_text_utf8
 
 VALID_THREAD_AUTO_ARCHIVE_MINUTES = {60, 1440, 4320, 10080}
 
@@ -2721,7 +2722,7 @@ if DISCORD_AVAILABLE:
                 home = get_hermes_home()
                 response_path = home / ".update_response"
                 tmp = response_path.with_suffix(".tmp")
-                tmp.write_text(answer)
+                write_text_utf8(tmp, answer)
                 tmp.replace(response_path)
                 logger.info(
                     "Discord update prompt answered '%s' by %s",

@@ -52,6 +52,9 @@ from tools.windows_compat import (
     WindowsNamedPipeServer,
     WindowsNamedPipeClient,
     check_named_pipe_requirements,
+    get_text_open_kwargs,
+    decode_utf8,
+    encode_utf8,
 )
 
 _IS_WINDOWS = is_windows()
@@ -302,7 +305,7 @@ def _call(tool_name, args):
         buf += chunk
         if buf.endswith(b"\\n"):
             break
-    raw = buf.decode().strip()
+    raw = buf.decode("utf-8").strip()
     result = json.loads(raw)
     if isinstance(result, str):
         try:
@@ -336,7 +339,7 @@ def _call(tool_name, args):
 
     # Write request atomically (write to .tmp, then rename)
     tmp = req_file + ".tmp"
-    with open(tmp, "w") as f:
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump({"tool": tool_name, "args": args, "seq": _seq}, f)
     os.rename(tmp, req_file)
 
@@ -349,7 +352,7 @@ def _call(tool_name, args):
         time.sleep(poll_interval)
         poll_interval = min(poll_interval * 1.2, 0.25)  # Back off to 250ms
 
-    with open(res_file) as f:
+    with open(res_file, encoding="utf-8") as f:
         raw = f.read()
 
     # Clean up response file
@@ -460,10 +463,10 @@ def _rpc_server_loop(
 
                 call_start = time.monotonic()
                 try:
-                    request = json.loads(line.decode())
+                    request = json.loads(decode_utf8(line))
                 except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                     resp = tool_error(f"Invalid RPC request: {exc}")
-                    _send_response(conn, (resp + "\n").encode())
+                    _send_response(conn, encode_utf8(resp + "\n"))
                     continue
 
                 tool_name = request.get("tool", "")
@@ -478,7 +481,7 @@ def _rpc_server_loop(
                             f"Available: {available}"
                         )
                     })
-                    _send_response(conn, (resp + "\n").encode())
+                    _send_response(conn, encode_utf8(resp + "\n"))
                     continue
 
                 # Enforce tool call limit
@@ -489,7 +492,7 @@ def _rpc_server_loop(
                             "No more tool calls allowed in this execution."
                         )
                     })
-                    _send_response(conn, (resp + "\n").encode())
+                    _send_response(conn, encode_utf8(resp + "\n"))
                     continue
 
                 # Strip forbidden terminal parameters
@@ -527,7 +530,7 @@ def _rpc_server_loop(
                     "duration": round(call_duration, 2),
                 })
 
-                _send_response(conn, (result + "\n").encode())
+                _send_response(conn, encode_utf8(result + "\n"))
 
     except socket.timeout:
         logger.debug("RPC listener socket timeout")
@@ -1093,11 +1096,11 @@ def execute_code(
         # sandbox_tools is already the correct set (intersection with session
         # tools, or SANDBOX_ALLOWED_TOOLS as fallback — see lines above).
         tools_src = generate_hermes_tools_module(list(sandbox_tools))
-        with open(os.path.join(tmpdir, "hermes_tools.py"), "w") as f:
+        with open(os.path.join(tmpdir, "hermes_tools.py"), "w", encoding="utf-8") as f:
             f.write(tools_src)
 
         # Write the user's script
-        with open(os.path.join(tmpdir, "script.py"), "w") as f:
+        with open(os.path.join(tmpdir, "script.py"), "w", encoding="utf-8") as f:
             f.write(code)
 
         # --- Start IPC server ---

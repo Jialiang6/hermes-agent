@@ -28,6 +28,8 @@ import platform
 import shutil
 import stat
 import subprocess
+
+from tools.windows_compat import get_text_open_kwargs
 import tarfile
 import tempfile
 import threading
@@ -126,7 +128,7 @@ def _read_failure_reason() -> str | None:
         mtime = os.path.getmtime(p)
         if (time.time() - mtime) >= _MARKER_TTL:
             return None
-        with open(p, "r") as f:
+        with open(p, **get_text_open_kwargs("r")) as f:
             return f.read().strip()
     except OSError:
         return None
@@ -160,7 +162,7 @@ def _mark_install_failed(reason: str = ""):
     try:
         p = _failure_marker_path()
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "w") as f:
+        with open(p, **get_text_open_kwargs("w")) as f:
             f.write(reason)
     except OSError:
         pass

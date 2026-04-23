@@ -28,6 +28,7 @@ if _env_path.exists():
 load_dotenv(PROJECT_ROOT / ".env", override=False, encoding="utf-8")
 
 from hermes_cli.colors import Colors, color
+from tools.windows_compat import read_text_utf8, write_text_utf8
 from hermes_constants import OPENROUTER_MODELS_URL
 
 
@@ -248,7 +249,7 @@ def run_doctor(args):
         check_ok(f"{_DHH}/.env file exists")
         
         # Check for common issues
-        content = env_path.read_text()
+        content = read_text_utf8(env_path)
         if _has_provider_env_config(content):
             check_ok("API key or custom endpoint configured")
         else:
@@ -845,7 +846,7 @@ def run_doctor(args):
         if lock_file.exists():
             try:
                 import json
-                lock_data = json.loads(lock_file.read_text())
+                lock_data = json.loads(read_text_utf8(lock_file))
                 count = len(lock_data.get("installed", {}))
                 check_ok(f"Lock file OK ({count} hub-installed skill(s))")
             except Exception:
@@ -978,7 +979,7 @@ def run_doctor(args):
                     if not wrapper.is_file():
                         continue
                     try:
-                        content = wrapper.read_text()
+                        content = read_text_utf8(wrapper)
                         if "hermes -p" in content:
                             _m = _re.search(r"hermes -p (\S+)", content)
                             if _m and not profile_exists(_m.group(1)):

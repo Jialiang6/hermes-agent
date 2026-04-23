@@ -18,6 +18,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from prompt_toolkit import print_formatted_text as _pt_print
+from tools.windows_compat import read_text_utf8, write_text_utf8
 from prompt_toolkit.formatted_text import ANSI as _PT_ANSI
 
 logger = logging.getLogger(__name__)
@@ -144,7 +145,7 @@ def check_for_updates() -> Optional[int]:
     now = time.time()
     try:
         if cache_file.exists():
-            cached = json.loads(cache_file.read_text())
+            cached = json.loads(read_text_utf8(cache_file))
             if now - cached.get("ts", 0) < _UPDATE_CHECK_CACHE_SECONDS:
                 return cached.get("behind")
     except Exception:
@@ -176,7 +177,7 @@ def check_for_updates() -> Optional[int]:
 
     # Write cache
     try:
-        cache_file.write_text(json.dumps({"ts": now, "behind": behind}))
+        write_text_utf8(cache_file, json.dumps({"ts": now, "behind": behind}))
     except Exception:
         pass
 

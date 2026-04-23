@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Union
 
 from hermes_constants import get_hermes_home
+from tools.windows_compat import read_text_utf8
 from utils import env_var_enabled
 
 try:
@@ -345,7 +346,7 @@ class PluginManager:
                 if yaml is None:
                     logger.warning("PyYAML not installed – cannot load %s", manifest_file)
                     continue
-                data = yaml.safe_load(manifest_file.read_text()) or {}
+                data = yaml.safe_load(read_text_utf8(manifest_file)) or {}
                 manifest = PluginManifest(
                     name=data.get("name", child.name),
                     version=str(data.get("version", "")),

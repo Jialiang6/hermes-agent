@@ -14,6 +14,7 @@ from pathlib import Path
 from hermes_constants import get_hermes_home
 
 from hermes_cli.colors import Colors, color
+from tools.windows_compat import read_text_utf8, write_text_utf8
 
 def log_info(msg: str):
     print(f"{color('→', Colors.CYAN)} {msg}")
@@ -56,7 +57,7 @@ def remove_path_from_shell_configs():
     
     for config_path in configs:
         try:
-            content = config_path.read_text()
+            content = read_text_utf8(config_path)
             original_content = content
             
             # Remove lines containing hermes-agent or hermes PATH entries
@@ -86,7 +87,7 @@ def remove_path_from_shell_configs():
                 new_content = new_content.replace('\n\n\n', '\n\n')
             
             if new_content != original_content:
-                config_path.write_text(new_content)
+                write_text_utf8(config_path, new_content)
                 removed_from.append(config_path)
                 
         except Exception as e:
@@ -107,7 +108,7 @@ def remove_wrapper_script():
         if wrapper.exists():
             try:
                 # Check if it's our wrapper (contains hermes_cli reference)
-                content = wrapper.read_text()
+                content = read_text_utf8(wrapper)
                 if 'hermes_cli' in content or 'hermes-agent' in content:
                     wrapper.unlink()
                     removed.append(wrapper)

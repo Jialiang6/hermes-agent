@@ -17,7 +17,7 @@ from tools.environments.file_sync import (
     quoted_rm_command,
     unique_parent_dirs,
 )
-from tools.windows_compat import create_symlink_or_copy, is_windows
+from tools.windows_compat import create_symlink_or_copy, decode_utf8, is_windows
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +200,7 @@ class SSHEnvironment(BaseEnvironment):
                     raise RuntimeError("SSH bulk upload timed out")
 
                 if ssh_proc.returncode != 0:
-                    raise RuntimeError(f"SSH bulk upload failed: {ssh_stderr.decode()}")
+                    raise RuntimeError(f"SSH bulk upload failed: {decode_utf8(ssh_stderr)}")
             else:
                 tar_cmd = ["tar", "-chf", "-", "-C", staging, "."]
                 ssh_cmd = self._build_ssh_command()

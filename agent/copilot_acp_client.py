@@ -21,6 +21,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from tools.windows_compat import read_text_utf8, write_text_utf8
+
 ACP_MARKER_BASE_URL = "acp://copilot"
 _DEFAULT_TIMEOUT_SECONDS = 900.0
 
@@ -529,7 +531,7 @@ class CopilotACPClient:
         elif method == "fs/read_text_file":
             try:
                 path = _ensure_path_within_cwd(str(params.get("path") or ""), cwd)
-                content = path.read_text() if path.exists() else ""
+                content = read_text_utf8(path) if path.exists() else ""
                 line = params.get("line")
                 limit = params.get("limit")
                 if isinstance(line, int) and line > 1:
@@ -550,7 +552,7 @@ class CopilotACPClient:
             try:
                 path = _ensure_path_within_cwd(str(params.get("path") or ""), cwd)
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(str(params.get("content") or ""))
+                write_text_utf8(path, str(params.get("content") or ""))
                 response = {
                     "jsonrpc": "2.0",
                     "id": message_id,

@@ -13,7 +13,7 @@ This module provides:
 """
 
 import os
-from tools.windows_compat import is_windows
+from tools.windows_compat import is_windows, get_text_open_kwargs
 import re
 import stat
 import subprocess
@@ -173,7 +173,7 @@ def get_container_exec_info() -> Optional[dict]:
 
     try:
         info = {}
-        with open(container_mode_file, "r") as f:
+        with open(container_mode_file, **get_text_open_kwargs("r")) as f:
             for line in f:
                 line = line.strip()
                 if "=" in line and not line.startswith("#"):

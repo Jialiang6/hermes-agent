@@ -48,6 +48,11 @@ __all__ = [
     # Windows safety constants
     "WINDOWS_DEVICE_NAMES", "WINDOWS_SYSTEM_PATHS", "is_windows_system_path",
     "WINDOWS_DANGEROUS_COMMANDS",
+    # UTF-8 encoding utilities
+    "get_text_open_kwargs", "decode_utf8", "encode_utf8",
+    "configure_stdout_utf8", "get_subprocess_encoding_kwargs",
+    # Path read/write UTF-8 wrappers
+    "read_text_utf8", "write_text_utf8",
 ]
 
 # Platform detection
@@ -1298,3 +1303,175 @@ def exec_replace(args: List[str]) -> None:
         sys.exit(0)
     else:
         os.execvp(args[0], args)
+
+
+# ---------------------------------------------------------------------------
+# UTF-8 Encoding Utilities
+# ---------------------------------------------------------------------------
+
+def get_text_open_kwargs(mode: str = "r", errors: str = "replace") -> dict:
+    """
+    Return kwargs for open() that work on all platforms.
+    
+    On Windows, open() defaults to the system locale (cp1252 on English
+    systems, cp936/GBK on Chinese systems) which can corrupt UTF-8 files.
+    This function returns the appropriate encoding kwargs for text files.
+    
+    Args:
+        mode: File mode ("r", "w", "a", "r+", "w+", "a+").
+        errors: Error handling mode ("replace", "ignore", "strict").
+    
+    Returns:
+        Dict with encoding kwargs for open().
+    
+    Example:
+        with open("file.txt", "w", **get_text_open_kwargs("w")) as f:
+            f.write("中文内容")
+    """
+    if _IS_WINDOWS:
+        return {"encoding": "utf-8", "errors": errors}
+    # On Unix, UTF-8 is the default, but explicit is better for portability
+    return {"encoding": "utf-8"}
+
+
+def decode_utf8(data: bytes, errors: str = "replace") -> str:
+    """
+    Decode bytes as UTF-8 with error handling.
+    
+    On Windows, bytes.decode() without arguments uses the system locale
+    encoding. This function always uses UTF-8 for consistency.
+    
+    Args:
+        data: Bytes to decode.
+        errors: Error handling mode ("replace", "ignore", "strict").
+    
+    Returns:
+        Decoded string.
+    
+    Example:
+        text = decode_utf8(proc.stdout.read())
+    """
+    return data.decode("utf-8", errors=errors)
+
+
+def encode_utf8(text: str, errors: str = "replace") -> bytes:
+    """
+    Encode string as UTF-8 with error handling.
+    
+    On Windows, str.encode() without arguments uses the system locale
+    encoding. This function always uses UTF-8 for consistency.
+    
+    Args:
+        text: String to encode.
+        errors: Error handling mode ("replace", "ignore", "strict").
+    
+    Returns:
+        Encoded bytes.
+    
+    Example:
+        data = encode_utf8("中文内容")
+    """
+    return text.encode("utf-8", errors=errors)
+
+
+def configure_stdout_utf8() -> None:
+    """
+    Configure stdout/stderr for UTF-8 output on Windows.
+    
+    On Windows, sys.stdout.encoding may be cp936 (GBK) or cp1252, causing
+    print() to fail or garble non-ASCII characters. Call this at startup
+    to ensure UTF-8 output.
+    
+    This is safe to call on all platforms (no-op on Unix).
+    
+    Example:
+        if __name__ == "__main__":
+            configure_stdout_utf8()
+            print("中文输出")
+    """
+    if _IS_WINDOWS:
+        if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+            try:
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+        if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+            try:
+                sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
+def get_subprocess_encoding_kwargs(text: bool = True) -> dict:
+    """
+    Return kwargs for subprocess.run/Popen with proper encoding.
+    
+    On Windows, subprocess output may be encoded in the system locale.
+    This ensures UTF-8 decoding for capture_output=True or stdout=PIPE.
+    
+    Args:
+        text: If True, return strings instead of bytes.
+    
+    Returns:
+        Dict with encoding kwargs for subprocess.
+    
+    Example:
+        result = subprocess.run(
+            ["git", "log"],
+            capture_output=True,
+            **get_subprocess_encoding_kwargs()
+        )
+        print(result.stdout)  # Already decoded as UTF-8
+    """
+    return {
+        "text": text,
+        "encoding": "utf-8",
+        "errors": "replace"
+    }
+
+
+# ---------------------------------------------------------------------------
+# Path.read_text() / Path.write_text() UTF-8 Wrappers
+# ---------------------------------------------------------------------------
+
+def read_text_utf8(path, errors: str = "replace") -> str:
+    """
+    Read file as UTF-8 text, compatible with all platforms.
+
+    On Windows, Path.read_text() defaults to the system locale encoding
+    (cp1252/cp936) which corrupts UTF-8 files. This always uses UTF-8.
+
+    Args:
+        path: File path (str or Path).
+        errors: Error handling mode ("replace", "ignore", "strict").
+
+    Returns:
+        File contents as string.
+
+    Example:
+        content = read_text_utf8(config_path)
+    """
+    from pathlib import Path
+    return Path(path).read_text(encoding="utf-8", errors=errors)
+
+
+def write_text_utf8(path, content: str, errors: str = "replace") -> int:
+    """
+    Write text to file as UTF-8, compatible with all platforms.
+
+    On Windows, Path.write_text() defaults to the system locale encoding
+    (cp1252/cp936) which corrupts UTF-8 content. This always uses UTF-8.
+
+    Args:
+        path: File path (str or Path).
+        content: Text to write.
+        errors: Error handling mode ("replace", "ignore", "strict").
+
+    Returns:
+        Number of characters written.
+
+    Example:
+        write_text_utf8(config_path, yaml.safe_dump(config))
+    """
+    from pathlib import Path
+    return Path(path).write_text(content, encoding="utf-8", errors=errors)

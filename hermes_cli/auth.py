@@ -39,6 +39,7 @@ import yaml
 
 from hermes_cli.config import get_hermes_home, get_config_path, read_raw_config
 from hermes_constants import OPENROUTER_BASE_URL
+from tools.windows_compat import read_text_utf8, write_text_utf8, get_text_open_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -584,7 +585,7 @@ def _auth_store_lock(timeout_seconds: float = AUTH_LOCK_TIMEOUT_SECONDS):
     if msvcrt and (not lock_path.exists() or lock_path.stat().st_size == 0):
         lock_path.write_text(" ", encoding="utf-8")
 
-    with lock_path.open("r+" if msvcrt else "a+") as lock_file:
+    with lock_path.open("r+" if msvcrt else "a+", **get_text_open_kwargs("r+" if msvcrt else "a+")) as lock_file:
         deadline = time.time() + max(1.0, timeout_seconds)
         while True:
             try:
@@ -620,7 +621,7 @@ def _load_auth_store(auth_file: Optional[Path] = None) -> Dict[str, Any]:
         return {"version": AUTH_STORE_VERSION, "providers": {}}
 
     try:
-        raw = json.loads(auth_file.read_text())
+        raw = json.loads(read_text_utf8(auth_file))
     except Exception:
         return {"version": AUTH_STORE_VERSION, "providers": {}}
 
@@ -1470,7 +1471,7 @@ def _import_codex_cli_tokens() -> Optional[Dict[str, str]]:
     if not auth_path.is_file():
         return None
     try:
-        payload = json.loads(auth_path.read_text())
+        payload = json.loads(read_text_utf8(auth_path))
         tokens = payload.get("tokens")
         if not isinstance(tokens, dict):
             return None
@@ -2577,7 +2578,7 @@ def _update_config_for_provider(
 
     config["model"] = model_cfg
 
-    config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+    write_text_utf8(config_path, yaml.safe_dump(config, sort_keys=False))
     return config_path
 
 
@@ -2596,7 +2597,7 @@ def _reset_config_provider() -> Path:
         model["provider"] = "auto"
         if "base_url" in model:
             model["base_url"] = OPENROUTER_BASE_URL
-    config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+    write_text_utf8(config_path, yaml.safe_dump(config, sort_keys=False))
     return config_path
 
 

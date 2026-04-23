@@ -39,7 +39,9 @@ import logging
 import os
 import threading
 import time
-from pathlib import Path  # noqa: F401 — used by test mocks
+from pathlib import Path
+
+from tools.windows_compat import read_text_utf8  # noqa: F401 — used by test mocks
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -611,7 +613,7 @@ def _read_nous_auth() -> Optional[dict]:
     try:
         if not _AUTH_JSON_PATH.is_file():
             return None
-        data = json.loads(_AUTH_JSON_PATH.read_text())
+        data = json.loads(read_text_utf8(_AUTH_JSON_PATH))
         if data.get("active_provider") != "nous":
             return None
         provider = data.get("providers", {}).get("nous", {})

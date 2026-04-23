@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from hermes_constants import get_default_hermes_root, get_hermes_home, display_hermes_home
+from tools.windows_compat import get_text_open_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -527,7 +528,7 @@ def create_quick_snapshot(
         "total_size": sum(manifest.values()),
         "files": manifest,
     }
-    with open(snap_dir / "manifest.json", "w") as f:
+    with open(snap_dir / "manifest.json", "w", **get_text_open_kwargs()) as f:
         json.dump(meta, f, indent=2)
 
     # Auto-prune
@@ -553,7 +554,7 @@ def list_quick_snapshots(
         manifest_path = d / "manifest.json"
         if manifest_path.exists():
             try:
-                with open(manifest_path) as f:
+                with open(manifest_path, **get_text_open_kwargs()) as f:
                     results.append(json.load(f))
             except (json.JSONDecodeError, OSError):
                 results.append({"id": d.name, "file_count": 0, "total_size": 0})
@@ -583,7 +584,7 @@ def restore_quick_snapshot(
     if not manifest_path.exists():
         return False
 
-    with open(manifest_path) as f:
+    with open(manifest_path, **get_text_open_kwargs()) as f:
         meta = json.load(f)
 
     restored = 0

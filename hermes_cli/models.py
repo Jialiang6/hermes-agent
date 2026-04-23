@@ -12,6 +12,7 @@ import os
 import urllib.request
 import urllib.error
 from difflib import get_close_matches
+from tools.windows_compat import decode_utf8
 from typing import Any, NamedTuple, Optional
 
 COPILOT_BASE_URL = "https://api.githubcopilot.com"
@@ -389,7 +390,7 @@ def fetch_nous_account_tier(access_token: str, portal_base_url: str = "") -> dic
     try:
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=8) as resp:
-            return json.loads(resp.read().decode())
+            return json.loads(decode_utf8(resp.read()))
     except Exception:
         return {}
 
@@ -634,7 +635,7 @@ def fetch_openrouter_models(
             headers={"Accept": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode())
+            payload = json.loads(decode_utf8(resp.read()))
     except Exception:
         return list(_openrouter_catalog_cache or fallback)
 
@@ -793,7 +794,7 @@ def fetch_models_with_pricing(
     try:
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode())
+            payload = json.loads(decode_utf8(resp.read()))
     except Exception:
         _pricing_cache[cache_key] = {}
         return {}
@@ -1296,7 +1297,7 @@ def _fetch_anthropic_models(timeout: float = 5.0) -> Optional[list[str]]:
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode())
+            data = json.loads(decode_utf8(resp.read()))
             models = [m["id"] for m in data.get("data", []) if m.get("id")]
             # Sort: latest/largest first (opus > sonnet > haiku, higher version first)
             return sorted(models, key=lambda m: (
@@ -1384,7 +1385,7 @@ def fetch_github_model_catalog(
         req = urllib.request.Request(COPILOT_MODELS_URL, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = json.loads(resp.read().decode())
+                data = json.loads(decode_utf8(resp.read()))
                 items = _payload_items(data)
                 models: list[dict[str, Any]] = []
                 seen_ids: set[str] = set()
@@ -1702,7 +1703,7 @@ def probe_api_models(
         req = urllib.request.Request(url, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = json.loads(resp.read().decode())
+                data = json.loads(decode_utf8(resp.read()))
                 return {
                     "models": [m.get("id", "") for m in data.get("data", [])],
                     "probed_url": url,
@@ -1737,7 +1738,7 @@ def _fetch_ai_gateway_models(timeout: float = 5.0) -> Optional[list[str]]:
     req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode())
+            data = json.loads(decode_utf8(resp.read()))
             return [
                 m["id"]
                 for m in data.get("data", [])

@@ -52,6 +52,7 @@ except ImportError:
     ContextTypes = _MockContextTypes
 
 import sys
+from tools.windows_compat import get_text_open_kwargs, write_text_utf8
 from pathlib import Path as _Path
 sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
 
@@ -372,7 +373,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 return
 
             import yaml as _yaml
-            with open(config_path, "r") as f:
+            with open(config_path, **get_text_open_kwargs("r")) as f:
                 config = _yaml.safe_load(f) or {}
 
             # Navigate to platforms.telegram.extra.dm_topics
@@ -396,7 +397,7 @@ class TelegramAdapter(BasePlatformAdapter):
                         break
 
             if changed:
-                with open(config_path, "w") as f:
+                with open(config_path, **get_text_open_kwargs("w")) as f:
                     _yaml.dump(config, f, default_flow_style=False, sort_keys=False)
                 logger.info(
                     "[%s] Persisted thread_id=%s for topic '%s' in config.yaml",
@@ -1507,7 +1508,7 @@ class TelegramAdapter(BasePlatformAdapter):
             home = get_hermes_home()
             response_path = home / ".update_response"
             tmp = response_path.with_suffix(".tmp")
-            tmp.write_text(answer)
+            write_text_utf8(tmp, answer)
             tmp.replace(response_path)
             logger.info("Telegram update prompt answered '%s' by user %s",
                         answer, getattr(query.from_user, "id", "unknown"))
@@ -2610,7 +2611,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 return
 
             import yaml as _yaml
-            with open(config_path, "r") as f:
+            with open(config_path, **get_text_open_kwargs("r")) as f:
                 config = _yaml.safe_load(f) or {}
 
             dm_topics = (

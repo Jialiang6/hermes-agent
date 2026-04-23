@@ -18,6 +18,8 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+
+from tools.windows_compat import decode_utf8
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -1180,7 +1182,7 @@ def _submit_anthropic_pkce(session_id: str, code_input: str) -> Dict[str, Any]:
     )
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
-            result = json.loads(resp.read().decode())
+            result = json.loads(decode_utf8(resp.read()))
     except Exception as e:
         sess["status"] = "error"
         sess["error_message"] = f"Token exchange failed: {e}"
