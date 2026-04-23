@@ -487,6 +487,17 @@ class DiscordAdapter(BasePlatformAdapter):
                         if os.path.isfile(_hp):
                             opus_path = _hp
                             break
+                elif sys.platform == "win32":
+                    # Common Windows opus DLL locations
+                    import ctypes
+                    _win_paths = (
+                        os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "opus", "opus.dll"),
+                        os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "opus", "opus.dll"),
+                    )
+                    for _wp in _win_paths:
+                        if os.path.isfile(_wp):
+                            opus_path = _wp
+                            break
             if opus_path:
                 try:
                     discord.opus.load_opus(opus_path)

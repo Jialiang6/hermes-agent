@@ -68,6 +68,11 @@ def _system_package_install_cmd(pkg: str) -> str:
         return f"pkg install {pkg}"
     if sys.platform == "darwin":
         return f"brew install {pkg}"
+    if sys.platform == "win32":
+        # winget is built-in on Windows 10+; choco is common third-party
+        if shutil.which("winget"):
+            return f"winget install {pkg}"
+        return f"choco install {pkg}"
     return f"sudo apt install {pkg}"
 
 

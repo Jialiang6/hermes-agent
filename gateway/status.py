@@ -20,7 +20,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from hermes_constants import get_hermes_home
-from tools.windows_compat import safe_kill, get_state_dir, read_text_utf8, write_text_utf8
+from tools.windows_compat import safe_kill, get_state_dir, read_text_utf8, write_text_utf8, is_windows
 from typing import Any, Optional
 
 _GATEWAY_KIND = "hermes-gateway"
@@ -74,6 +74,22 @@ def _get_scope_lock_path(scope: str, identity: str) -> Path:
 
 def _get_process_start_time(pid: int) -> Optional[int]:
     """Return the kernel start time for a process when available."""
+    if is_windows():
+        try:
+            r = subprocess.run(
+                ["wmic", "process", "where", f"ProcessId={pid}", "get", "CreationDate"],
+                capture_output=True, text=True, timeout=5,
+            )
+            # Parse wmic output - second line has the date
+            lines = [l.strip() for l in r.stdout.strip().splitlines() if l.strip()]
+            if len(lines) >= 2:
+                # wmic CreationDate format: 20240423120000.000000+000
+                # Convert to integer timestamp
+                dt = datetime.strptime(lines[1][:14], "%Y%m%d%H%M%S")
+                return int(dt.timestamp())
+        except Exception:
+            pass
+        return None
     stat_path = Path(f"/proc/{pid}/stat")
     try:
         # Field 22 in /proc/<pid>/stat is process start time (clock ticks).
@@ -84,6 +100,18 @@ def _get_process_start_time(pid: int) -> Optional[int]:
 
 def _read_process_cmdline(pid: int) -> Optional[str]:
     """Return the process command line as a space-separated string."""
+    if is_windows():
+        try:
+            r = subprocess.run(
+                ["wmic", "process", "where", f"ProcessId={pid}", "get", "CommandLine"],
+                capture_output=True, text=True, timeout=5,
+            )
+            lines = [l.strip() for l in r.stdout.strip().splitlines() if l.strip()]
+            if len(lines) >= 2:
+                return " ".join(lines[1:])
+        except Exception:
+            pass
+        return None
     cmdline_path = Path(f"/proc/{pid}/cmdline")
     try:
         raw = cmdline_path.read_bytes()
@@ -310,7 +338,7 @@ def acquire_scoped_lock(scope: str, identity: str, metadata: Optional[dict[str, 
                 # Check if process is stopped (Ctrl+Z / SIGTSTP) — stopped
                 # processes still respond to os.kill(pid, 0) but are not
                 # actually running. Treat them as stale so --replace works.
-                if not stale:
+                if not stale and not is_windows():
                     try:
                         _proc_status = Path(f"/proc/{existing_pid}/status")
                         if _proc_status.exists():

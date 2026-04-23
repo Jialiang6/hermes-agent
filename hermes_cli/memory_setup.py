@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from hermes_constants import get_hermes_home
-from tools.windows_compat import decode_utf8, get_text_open_kwargs, read_text_utf8, write_text_utf8
+from tools.windows_compat import decode_utf8, detect_shell, get_shell_args, get_text_open_kwargs, read_text_utf8, write_text_utf8
 
 
 # ---------------------------------------------------------------------------
@@ -132,9 +132,9 @@ def _install_dependencies(provider_name: str) -> None:
         install_cmd = dep.get("install", "")
         if check_cmd:
             try:
-                subprocess.run(
-                    check_cmd, shell=True, capture_output=True, timeout=5
-                )
+                shell_bin = detect_shell()
+                shell_argv = [shell_bin] + get_shell_args(shell_bin, check_cmd)
+                subprocess.run(shell_argv, capture_output=True, timeout=5)
             except Exception:
                 if install_cmd:
                     print(f"\n  ⚠ '{dep_name}' not found. Install with:")

@@ -391,6 +391,28 @@ def show_status(args):
             is_loaded = False
         print(f"  Status:       {check_mark(is_loaded)} {'loaded' if is_loaded else 'not loaded'}")
         print("  Manager:      launchd")
+    elif sys.platform == 'win32':
+        # Windows: check gateway PID file and verify process is alive
+        try:
+            _gw_pid_path = get_hermes_home() / "gateway.pid"
+            if _gw_pid_path.exists():
+                import json as _json
+                _pid_data = _json.loads(_gw_pid_path.read_text(encoding="utf-8"))
+                _gw_pid = _pid_data.get("pid")
+                if _gw_pid:
+                    try:
+                        os.kill(_gw_pid, 0)
+                        print(f"  Status:       {check_mark(True)} running")
+                        print(f"  PID:          {_gw_pid}")
+                    except (OSError, ProcessLookupError):
+                        print(f"  Status:       {check_mark(False)} stopped (stale pid)")
+                else:
+                    print(f"  Status:       {check_mark(False)} stopped")
+            else:
+                print(f"  Status:       {check_mark(False)} stopped")
+        except Exception:
+            print(f"  Status:       {color('unknown', Colors.DIM)}")
+        print("  Manager:      manual process")
     else:
         print(f"  Status:       {color('N/A', Colors.DIM)}")
         print("  Manager:      (not supported on this platform)")

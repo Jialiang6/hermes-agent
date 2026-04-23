@@ -77,6 +77,22 @@ def _gateway_status() -> str:
             return "loaded (launchd)" if r.returncode == 0 else "not loaded"
         except Exception:
             return "unknown"
+    elif sys.platform == "win32":
+        try:
+            from hermes_constants import get_hermes_home
+            pid_path = get_hermes_home() / "gateway.pid"
+            if pid_path.exists():
+                data = json.loads(pid_path.read_text(encoding="utf-8"))
+                pid = data.get("pid")
+                if pid:
+                    try:
+                        os.kill(pid, 0)  # Check if process exists
+                        return f"running (pid {pid})"
+                    except (OSError, ProcessLookupError):
+                        return "stopped (stale pid)"
+            return "stopped"
+        except Exception:
+            return "unknown"
     return "N/A"
 
 
