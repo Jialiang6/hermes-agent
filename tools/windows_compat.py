@@ -18,9 +18,37 @@ import signal
 import shutil
 import logging
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Callable
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    # Platform detection
+    "is_windows", "is_posix",
+    # Signal compatibility
+    "get_signal", "add_signal_handler",
+    # Process management
+    "terminate_process_tree", "safe_kill", "exec_replace",
+    # Windows command resolution
+    "resolve_windows_executable", "is_batch_file", "build_cmd_command_line",
+    # IPC
+    "create_ipc_server", "create_ipc_client",
+    "WindowsNamedPipeServer", "WindowsNamedPipeClient",
+    "check_named_pipe_requirements",
+    # File locking
+    "lock_file", "unlock_file",
+    # Windows process utilities
+    "get_windows_listening_pids", "get_windows_process_args",
+    # Shell detection
+    "detect_shell", "has_git_bash", "shell_quote", "get_shell_args",
+    # Path utilities
+    "join_path_list", "get_sane_path_str", "get_state_dir",
+    # File utilities
+    "create_symlink_or_copy",
+    # Windows safety constants
+    "WINDOWS_DEVICE_NAMES", "WINDOWS_SYSTEM_PATHS", "is_windows_system_path",
+    "WINDOWS_DANGEROUS_COMMANDS",
+]
 
 # Platform detection
 _IS_WINDOWS = sys.platform == "win32"
@@ -965,3 +993,308 @@ def get_shell_args(shell: str, command: str) -> List[str]:
             return ["/v:on", "/d", "/c", command]
     else:
         return ["-c", command]
+
+
+# ---------------------------------------------------------------------------
+# Path Utilities
+# ---------------------------------------------------------------------------
+
+def join_path_list(*parts: str) -> str:
+    """
+    Join path entries using the platform-specific path separator.
+
+    Uses ``;`` on Windows, ``:`` on Unix. Empty/falsy parts are
+    automatically filtered out.
+
+    Args:
+        *parts: Path strings to join.
+
+    Returns:
+        A single string with non-empty parts joined by ``os.pathsep``.
+    """
+    return os.pathsep.join(p for p in parts if p)
+
+
+def get_sane_path_str() -> str:
+    """
+    Return a sane default PATH string for the current platform.
+
+    On Windows: common system directories plus Python/scripts dirs from
+    ``sys.executable``.
+    On Unix/macOS: standard FHS paths (with Homebrew dirs on macOS).
+
+    Returns:
+        A ``os.pathsep``-joined string of directory paths.
+    """
+    if _IS_WINDOWS:
+        dirs: List[str] = [
+            r"C:\Windows\System32",
+            r"C:\Windows",
+            r"C:\Program Files",
+            r"C:\Program Files (x86)",
+        ]
+        # Add Python/scripts directory from sys.executable
+        if sys.executable:
+            python_dir = os.path.dirname(sys.executable)
+            if python_dir:
+                dirs.append(python_dir)
+                scripts_dir = os.path.join(python_dir, "Scripts")
+                if os.path.isdir(scripts_dir):
+                    dirs.append(scripts_dir)
+        return os.pathsep.join(dirs)
+    else:
+        dirs = [
+            "/usr/local/sbin",
+            "/usr/local/bin",
+            "/usr/sbin",
+            "/usr/bin",
+            "/sbin",
+            "/bin",
+        ]
+        if sys.platform == "darwin":
+            # Homebrew Apple Silicon / Intel paths
+            dirs = [
+                "/opt/homebrew/bin",
+                "/opt/homebrew/sbin",
+            ] + dirs
+        return os.pathsep.join(dirs)
+
+
+def get_state_dir() -> Path:
+    """
+    Return the platform-appropriate state directory for Hermes.
+
+    On Windows: ``%LOCALAPPDATA%\\hermes`` (or
+    ``~/AppData/Local/hermes`` if LOCALAPPDATA is unset).
+    On Unix: ``$XDG_STATE_HOME/hermes`` (or
+    ``~/.local/state/hermes`` if XDG_STATE_HOME is unset).
+
+    Returns:
+        A ``Path`` object pointing to the state directory.
+        The directory is **not** created automatically.
+    """
+    if _IS_WINDOWS:
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:
+        base = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+    return base / "hermes"
+
+
+# ---------------------------------------------------------------------------
+# Signal Handler (asyncio loop compatibility)
+# ---------------------------------------------------------------------------
+
+def add_signal_handler(loop, sig: int, callback: Callable) -> None:
+    """
+    Register *callback* for signal *sig* on the given asyncio *loop*.
+
+    On Unix the preferred ``loop.add_signal_handler()`` is used.  On
+    Windows that method raises ``NotImplementedError``; this function
+    falls back to ``signal.signal()`` so callers don't have to worry
+    about the platform difference.
+
+    Args:
+        loop: An ``asyncio.AbstractEventLoop``.
+        sig: Signal number (e.g. ``signal.SIGINT``).
+        callback: Synchronous or async callable invoked when the signal
+            is received.
+    """
+    try:
+        loop.add_signal_handler(sig, callback)
+    except NotImplementedError:
+        # Windows — add_signal_handler is not supported.
+        # Use signal.signal() as a fallback.  Wrap async callbacks so
+        # they are scheduled on the event loop.
+        import asyncio
+        import inspect
+
+        if inspect.iscoroutinefunction(callback):
+            def _sync_wrapper(*_args, **_kwargs):
+                asyncio.ensure_future(callback(), loop=loop)
+            signal.signal(sig, _sync_wrapper)
+        else:
+            signal.signal(sig, callback)
+
+
+# ---------------------------------------------------------------------------
+# Symlink / Copy Fallback
+# ---------------------------------------------------------------------------
+
+def create_symlink_or_copy(
+    src: str,
+    dst: str,
+    target_is_directory: bool = False,
+) -> bool:
+    """
+    Create a symbolic link, falling back to a copy on Windows.
+
+    On Unix (or Windows with Developer Mode / admin privileges) a real
+    symlink is created.  If ``os.symlink`` raises ``OSError`` (typical
+    on Windows without sufficient privileges), the function falls back
+    to copying: ``shutil.copy2`` for files, ``shutil.copytree`` for
+    directories.
+
+    Args:
+        src: Source path.
+        dst: Destination path.
+        target_is_directory: True if the target is a directory.
+
+    Returns:
+        True if a symlink was created, False if the copy fallback was
+        used.
+    """
+    try:
+        os.symlink(src, dst, target_is_directory=target_is_directory)
+        return True
+    except OSError:
+        if target_is_directory or os.path.isdir(src):
+            shutil.copytree(src, dst)
+        else:
+            shutil.copy2(src, dst)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Windows Safety Constants
+# ---------------------------------------------------------------------------
+
+WINDOWS_DEVICE_NAMES: frozenset = frozenset({
+    # Classic DOS device names
+    "NUL", "CON", "CONIN$", "CONOUT$", "AUX", "PRN",
+    # Serial ports
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    # Parallel ports
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    # Path prefixes that bypass normal Windows path resolution
+    "\\\\.\\",
+    "\\\\?\\",
+})
+"""
+Windows device names and path prefixes that must never be used as
+ordinary file names.  Useful for input validation / path sanitisation.
+"""
+
+WINDOWS_SYSTEM_PATHS: Tuple[str, ...] = (
+    r"c:\windows\\",
+    r"c:\program files\\",
+    r"c:\program files (x86)\\",
+    r"c:\programdata\\",
+    r"c:\windows\system32\\",
+    r"c:\windows\system32\config\\",
+)
+"""
+Windows system directories (lowercase, trailing backslash) that should
+be write-protected.  Use :func:`is_windows_system_path` to check a
+path against this list.
+"""
+
+
+def is_windows_system_path(path: str) -> bool:
+    """
+    Check whether *path* falls under a protected Windows system directory.
+
+    The path is normalised (``os.path.normpath``) and compared
+    case-insensitively against :data:`WINDOWS_SYSTEM_PATHS`.
+
+    Args:
+        path: Filesystem path to check.
+
+    Returns:
+        True if the path is inside a system directory (always False on
+        non-Windows platforms).
+    """
+    if not _IS_WINDOWS:
+        return False
+    normalised = os.path.normpath(path).lower() + "\\"
+    for sys_path in WINDOWS_SYSTEM_PATHS:
+        if normalised.startswith(sys_path):
+            return True
+    return False
+
+
+WINDOWS_DANGEROUS_COMMANDS: List[Tuple[str, str]] = [
+    (r"del\s+/[sfq]", "Force delete files"),
+    (r"rmdir\s+/[sq]", "Force remove directories"),
+    (r"format\s+[a-zA-Z]", "Format drive"),
+    (r"taskkill\s+/[fF]", "Force kill processes"),
+    (r"icacls\s+.*\/grant", "Change permissions"),
+    (r"takeown\s+", "Take ownership"),
+    (r"diskpart", "Disk management"),
+    (r"regedit", "Registry editor"),
+    (r"reg\s+.*(add|delete)", "Registry modification"),
+    (r"net\s+(user|localgroup)", "User management"),
+    (r"powershell\s+-(command|enc)", "PowerShell script execution"),
+    (r"cmd\.exe\s+/c", "CMD script execution"),
+]
+"""
+List of ``(pattern, description)`` tuples for Windows commands that are
+considered dangerous.  *pattern* is a regular-expression string; match
+it against user-supplied command strings to warn or block execution.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Safe Process Kill
+# ---------------------------------------------------------------------------
+
+def safe_kill(pid: int, sig_name: str = "SIGTERM") -> bool:
+    """
+    Send a signal to a process, handling platform differences.
+
+    On Unix the signal is resolved by name via :func:`get_signal` and
+    sent with ``os.kill``.  On Windows, ``SIGTERM`` and ``SIGKILL`` use
+    :func:`terminate_process_tree` (which handles process groups);
+    other signals fall through to ``os.kill``.
+
+    Args:
+        pid: Process ID.
+        sig_name: Signal name (default ``"SIGTERM"``).
+
+    Returns:
+        True if the signal was sent successfully, False otherwise.
+    """
+    if _IS_WINDOWS:
+        if sig_name.upper() in ("SIGKILL", "SIGTERM"):
+            return terminate_process_tree(pid, force=(sig_name.upper() == "SIGKILL"))
+        # Other signals — try os.kill directly
+        sig = get_signal(sig_name)
+        if sig is None:
+            return False
+        try:
+            os.kill(pid, sig)
+            return True
+        except (OSError, ProcessLookupError, PermissionError):
+            return False
+    else:
+        sig = get_signal(sig_name)
+        if sig is None:
+            return False
+        try:
+            os.kill(pid, sig)
+            return True
+        except (OSError, ProcessLookupError, PermissionError):
+            return False
+
+
+# ---------------------------------------------------------------------------
+# Exec Replace (process replacement)
+# ---------------------------------------------------------------------------
+
+def exec_replace(args: List[str]) -> None:
+    """
+    Replace the current process with a new program.
+
+    On Unix this calls ``os.execvp`` which truly replaces the process
+    image.  On Windows ``os.execvp`` is not reliable, so we launch a
+    subprocess and then call ``sys.exit(0)`` — the net effect is that
+    the old process ends and a new one starts.
+
+    Args:
+        args: Command and arguments — ``args[0]`` is the program to
+            execute.
+    """
+    if _IS_WINDOWS:
+        subprocess.Popen(args)
+        sys.exit(0)
+    else:
+        os.execvp(args[0], args)

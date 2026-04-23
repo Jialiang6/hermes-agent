@@ -227,8 +227,13 @@ def _is_wrapper_dir_in_path() -> bool:
 def create_wrapper_script(name: str) -> Optional[Path]:
     """Create a shell wrapper script at ~/.local/bin/<name>.
 
+    On Unix: Creates a shell script with #!/bin/sh
+    On Windows: Creates a .cmd batch file
+
     Returns the path to the created wrapper, or None if creation failed.
     """
+    from tools.windows_compat import is_windows
+
     wrapper_dir = _get_wrapper_dir()
     try:
         wrapper_dir.mkdir(parents=True, exist_ok=True)
@@ -236,14 +241,25 @@ def create_wrapper_script(name: str) -> Optional[Path]:
         print(f"⚠ Could not create {wrapper_dir}: {e}")
         return None
 
-    wrapper_path = wrapper_dir / name
-    try:
-        wrapper_path.write_text(f'#!/bin/sh\nexec hermes -p {name} "$@"\n')
-        wrapper_path.chmod(wrapper_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-        return wrapper_path
-    except OSError as e:
-        print(f"⚠ Could not create wrapper at {wrapper_path}: {e}")
-        return None
+    # On Windows, use .cmd extension for batch files
+    if is_windows():
+        wrapper_path = wrapper_dir / f"{name}.cmd"
+        try:
+            # Windows batch file: pass all arguments via %*
+            wrapper_path.write_text(f'@echo off\nhermes -p {name} %*\n')
+            return wrapper_path
+        except OSError as e:
+            print(f"⚠ Could not create wrapper at {wrapper_path}: {e}")
+            return None
+    else:
+        wrapper_path = wrapper_dir / name
+        try:
+            wrapper_path.write_text(f'#!/bin/sh\nexec hermes -p {name} "$@"\n')
+            wrapper_path.chmod(wrapper_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+            return wrapper_path
+        except OSError as e:
+            print(f"⚠ Could not create wrapper at {wrapper_path}: {e}")
+            return None
 
 
 def remove_wrapper_script(name: str) -> bool:

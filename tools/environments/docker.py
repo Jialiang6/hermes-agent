@@ -23,10 +23,12 @@ logger = logging.getLogger(__name__)
 # Common Docker Desktop install paths checked when 'docker' is not in PATH.
 # macOS Intel: /usr/local/bin, macOS Apple Silicon (Homebrew): /opt/homebrew/bin,
 # Docker Desktop app bundle: /Applications/Docker.app/Contents/Resources/bin
+# Windows: Docker Desktop installs to Program Files
 _DOCKER_SEARCH_PATHS = [
     "/usr/local/bin/docker",
     "/opt/homebrew/bin/docker",
     "/Applications/Docker.app/Contents/Resources/bin/docker",
+    r"C:\Program Files\Docker\Docker\resources\bin\docker.exe",
 ]
 
 _docker_executable: Optional[str] = None  # resolved once, cached
@@ -535,21 +537,59 @@ class DockerEnvironment(BaseEnvironment):
         if self._container_id:
             try:
                 # Stop in background so cleanup doesn't block
-                stop_cmd = (
-                    f"(timeout 60 {self._docker_exe} stop {self._container_id} || "
-                    f"{self._docker_exe} rm -f {self._container_id}) >/dev/null 2>&1 &"
-                )
-                subprocess.Popen(stop_cmd, shell=True)
+                # Use platform-appropriate background execution
+                from tools.windows_compat import is_windows
+                if is_windows():
+                    # Windows: use start /B for background execution
+                    # PowerShell: Start-Process -NoNewWindow
+                    import threading
+                    def _stop_container():
+                        try:
+                            subprocess.run(
+                                [self._docker_exe, "stop", self._container_id],
+                                capture_output=True, timeout=60
+                            )
+                        except Exception:
+                            try:
+                                subprocess.run(
+                                    [self._docker_exe, "rm", "-f", self._container_id],
+                                    capture_output=True, timeout=10
+                                )
+                            except Exception:
+                                pass
+                    threading.Thread(target=_stop_container, daemon=True).start()
+                else:
+                    # Unix: use shell background syntax
+                    stop_cmd = (
+                        f"(timeout 60 {self._docker_exe} stop {self._container_id} || "
+                        f"{self._docker_exe} rm -f {self._container_id}) >/dev/null 2>&1 &"
+                    )
+                    subprocess.Popen(stop_cmd, shell=True)
             except Exception as e:
                 logger.warning("Failed to stop container %s: %s", self._container_id, e)
 
             if not self._persistent:
                 # Also schedule removal (stop only leaves it as stopped)
                 try:
-                    subprocess.Popen(
-                        f"sleep 3 && {self._docker_exe} rm -f {self._container_id} >/dev/null 2>&1 &",
-                        shell=True,
-                    )
+                    from tools.windows_compat import is_windows
+                    if is_windows():
+                        import threading
+                        import time
+                        def _remove_container():
+                            time.sleep(3)
+                            try:
+                                subprocess.run(
+                                    [self._docker_exe, "rm", "-f", self._container_id],
+                                    capture_output=True, timeout=10
+                                )
+                            except Exception:
+                                pass
+                        threading.Thread(target=_remove_container, daemon=True).start()
+                    else:
+                        subprocess.Popen(
+                            f"sleep 3 && {self._docker_exe} rm -f {self._container_id} >/dev/null 2>&1 &",
+                            shell=True,
+                        )
                 except Exception:
                     pass
             self._container_id = None

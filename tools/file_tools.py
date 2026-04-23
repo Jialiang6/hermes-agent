@@ -5,11 +5,15 @@ import errno
 import json
 import logging
 import os
+import sys
 import threading
 from pathlib import Path
 from tools.binary_extensions import has_binary_extension
 from tools.file_operations import ShellFileOperations
 from agent.redact import redact_sensitive_text
+from tools.windows_compat import (
+    WINDOWS_DEVICE_NAMES, is_windows_system_path, is_windows
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +80,11 @@ def _is_blocked_device(filepath: str) -> bool:
 
     Uses the *literal* path — no symlink resolution — because the model
     specifies paths directly and realpath follows symlinks all the way
-    through (e.g. /dev/stdin → /proc/self/fd/0 → /dev/pts/0), defeating
+    through (e.g. /dev/stdin -> /proc/self/fd/0 -> /dev/pts/0), defeating
     the check.
+    
+    On Windows, also blocks device names (CON, NUL, COM1, etc.) and
+    Win32 device namespace prefixes (\\.\ and \?\).
     """
     normalized = os.path.expanduser(filepath)
     if normalized in _BLOCKED_DEVICE_PATHS:
@@ -87,6 +94,20 @@ def _is_blocked_device(filepath: str) -> bool:
         ("/fd/0", "/fd/1", "/fd/2")
     ):
         return True
+    
+    # Windows device name blocking
+    if is_windows():
+        # Check for Win32 device namespace prefixes
+        norm_lower = normalized.lower()
+        if norm_lower.startswith("\\\\.\\") or norm_lower.startswith("\\\\?\\"):
+            return True
+        
+        # Check if basename (without extension) matches a Windows device name
+        basename = os.path.basename(normalized)
+        name_without_ext = os.path.splitext(basename)[0].upper()
+        if name_without_ext in WINDOWS_DEVICE_NAMES:
+            return True
+    
     return False
 
 
@@ -115,6 +136,11 @@ def _check_sensitive_path(filepath: str) -> str | None:
             return _err
     if resolved in _SENSITIVE_EXACT_PATHS or normalized in _SENSITIVE_EXACT_PATHS:
         return _err
+    
+    # Windows system path protection
+    if is_windows_system_path(filepath):
+        return _err
+    
     return None
 
 

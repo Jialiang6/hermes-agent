@@ -26,6 +26,8 @@ import threading
 import time
 from pathlib import Path
 from datetime import datetime
+
+from tools.windows_compat import is_windows, add_signal_handler
 from typing import Dict, Optional, Any, List
 
 # ---------------------------------------------------------------------------
@@ -8965,15 +8967,9 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     loop = asyncio.get_event_loop()
     if threading.current_thread() is threading.main_thread():
         for sig in (signal.SIGINT, signal.SIGTERM):
-            try:
-                loop.add_signal_handler(sig, shutdown_signal_handler)
-            except NotImplementedError:
-                pass
+            add_signal_handler(loop, sig, shutdown_signal_handler)
         if hasattr(signal, "SIGUSR1"):
-            try:
-                loop.add_signal_handler(signal.SIGUSR1, restart_signal_handler)
-            except NotImplementedError:
-                pass
+            add_signal_handler(loop, signal.SIGUSR1, restart_signal_handler)
     else:
         logger.info("Skipping signal handlers (not running in main thread).")
     

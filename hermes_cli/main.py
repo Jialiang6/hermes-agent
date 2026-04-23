@@ -644,7 +644,8 @@ def _exec_in_container(container_info: dict, cli_args: list):
         + cli_args
     )
 
-    os.execvp(exec_cmd[0], exec_cmd)
+    from tools.windows_compat import exec_replace
+    exec_replace(exec_cmd)
 
 
 def _resolve_session_by_name_or_id(name_or_id: str) -> Optional[str]:
@@ -4066,14 +4067,12 @@ def cmd_update(args):
             # Kill any remaining gateway processes not managed by a service.
             # Exclude PIDs that belong to just-restarted services so we don't
             # immediately kill the process that systemd/launchd just spawned.
+            from tools.windows_compat import safe_kill
             service_pids = _get_service_pids()
             manual_pids = find_gateway_pids(exclude_pids=service_pids, all_profiles=True)
             for pid in manual_pids:
-                try:
-                    os.kill(pid, _signal.SIGTERM)
+                if safe_kill(pid, 'SIGTERM'):
                     killed_pids.add(pid)
-                except (ProcessLookupError, PermissionError):
-                    pass
 
             if restarted_services or killed_pids:
                 print()
@@ -4356,7 +4355,13 @@ def cmd_profile(args):
             if wrapper_path:
                 # If custom name, write the profile name into the wrapper
                 if custom_name:
-                    wrapper_path.write_text(f'#!/bin/sh\nexec hermes -p {name} "$@"\n')
+                    from tools.windows_compat import is_windows
+                    if is_windows():
+                        wrapper_path.write_text(f'@echo off\nhermes -p {name} %*\n')
+                    else:
+                        wrapper_path.write_text(f'#!/bin/sh\nexec hermes -p {name} "$@"\n')
+                        import stat
+                        wrapper_path.chmod(wrapper_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
                 print(f"✓ Alias created: {wrapper_path}")
                 if not _is_wrapper_dir_in_path():
                     print(f"⚠ {_get_wrapper_dir()} is not in your PATH.")
@@ -5641,16 +5646,16 @@ Examples:
             # Launch hermes --resume <id> by replacing the current process
             print(f"Resuming session: {selected_id}")
             import shutil
+            from tools.windows_compat import exec_replace
             hermes_bin = shutil.which("hermes")
             if hermes_bin:
-                os.execvp(hermes_bin, ["hermes", "--resume", selected_id])
+                exec_replace([hermes_bin, "hermes", "--resume", selected_id])
             else:
                 # Fallback: re-invoke via python -m
-                os.execvp(
-                    sys.executable,
+                exec_replace(
                     [sys.executable, "-m", "hermes_cli.main", "--resume", selected_id],
                 )
-            return  # won't reach here after execvp
+            return  # won't reach here after exec_replace
 
         elif action == "stats":
             total = db.session_count()

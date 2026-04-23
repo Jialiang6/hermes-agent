@@ -5,6 +5,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import tarfile
 import tempfile
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from tools.environments.file_sync import (
     quoted_rm_command,
     unique_parent_dirs,
 )
+from tools.windows_compat import create_symlink_or_copy, is_windows
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +67,11 @@ class SSHEnvironment(BaseEnvironment):
 
     def _build_ssh_command(self, extra_args: list | None = None) -> list:
         cmd = ["ssh"]
-        cmd.extend(["-o", f"ControlPath={self.control_socket}"])
-        cmd.extend(["-o", "ControlMaster=auto"])
-        cmd.extend(["-o", "ControlPersist=300"])
+        # ControlMaster is not supported by Windows OpenSSH
+        if not is_windows():
+            cmd.extend(["-o", f"ControlPath={self.control_socket}"])
+            cmd.extend(["-o", "ControlMaster=auto"])
+            cmd.extend(["-o", "ControlPersist=300"])
         cmd.extend(["-o", "BatchMode=yes"])
         cmd.extend(["-o", "StrictHostKeyChecking=accept-new"])
         cmd.extend(["-o", "ConnectTimeout=10"])
@@ -161,58 +165,89 @@ class SSHEnvironment(BaseEnvironment):
                 raise RuntimeError(f"remote mkdir failed: {result.stderr.strip()}")
 
         # Symlink staging avoids fragile GNU tar --transform rules.
+        # On Windows, fall back to copying if symlinks are not available.
         with tempfile.TemporaryDirectory(prefix="hermes-ssh-bulk-") as staging:
             for host_path, remote_path in files:
                 staged = os.path.join(staging, remote_path.lstrip("/"))
                 os.makedirs(os.path.dirname(staged), exist_ok=True)
-                os.symlink(os.path.abspath(host_path), staged)
+                create_symlink_or_copy(os.path.abspath(host_path), staged)
 
-            tar_cmd = ["tar", "-chf", "-", "-C", staging, "."]
-            ssh_cmd = self._build_ssh_command()
-            ssh_cmd.append("tar xf - -C /")
+            # On Windows, use Python's tarfile module since 'tar' may not exist
+            if is_windows():
+                # Create tar archive in memory using tarfile
+                import io
+                tar_buffer = io.BytesIO()
+                with tarfile.open(fileobj=tar_buffer, mode='w|') as tar:
+                    for root, dirs, filenames in os.walk(staging):
+                        for filename in filenames:
+                            filepath = os.path.join(root, filename)
+                            arcname = os.path.relpath(filepath, staging)
+                            tar.add(filepath, arcname=arcname)
+                tar_data = tar_buffer.getvalue()
 
-            tar_proc = subprocess.Popen(
-                tar_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
-            try:
+                # Send tar data via SSH
+                ssh_cmd = self._build_ssh_command()
+                ssh_cmd.append("tar xf - -C /")
                 ssh_proc = subprocess.Popen(
-                    ssh_cmd, stdin=tar_proc.stdout, stdout=subprocess.PIPE,
+                    ssh_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                 )
-            except Exception:
-                tar_proc.kill()
-                tar_proc.wait()
-                raise
+                try:
+                    _, ssh_stderr = ssh_proc.communicate(tar_data, timeout=120)
+                except subprocess.TimeoutExpired:
+                    ssh_proc.kill()
+                    ssh_proc.wait()
+                    raise RuntimeError("SSH bulk upload timed out")
 
-            # Allow tar_proc to receive SIGPIPE if ssh_proc exits early
-            tar_proc.stdout.close()
+                if ssh_proc.returncode != 0:
+                    raise RuntimeError(f"SSH bulk upload failed: {ssh_stderr.decode()}")
+            else:
+                tar_cmd = ["tar", "-chf", "-", "-C", staging, "."]
+                ssh_cmd = self._build_ssh_command()
+                ssh_cmd.append("tar xf - -C /")
 
-            try:
-                _, ssh_stderr = ssh_proc.communicate(timeout=120)
-                # Use communicate() instead of wait() to drain stderr and
-                # avoid deadlock if tar produces more than PIPE_BUF of errors.
-                tar_stderr_raw = b""
-                if tar_proc.poll() is None:
-                    _, tar_stderr_raw = tar_proc.communicate(timeout=10)
-                else:
-                    tar_stderr_raw = tar_proc.stderr.read() if tar_proc.stderr else b""
-            except subprocess.TimeoutExpired:
-                tar_proc.kill()
-                ssh_proc.kill()
-                tar_proc.wait()
-                ssh_proc.wait()
-                raise RuntimeError("SSH bulk upload timed out")
-
-            if tar_proc.returncode != 0:
-                raise RuntimeError(
-                    f"tar create failed (rc={tar_proc.returncode}): "
-                    f"{tar_stderr_raw.decode(errors='replace').strip()}"
+                tar_proc = subprocess.Popen(
+                    tar_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
                 )
-            if ssh_proc.returncode != 0:
-                raise RuntimeError(
-                    f"tar extract over SSH failed (rc={ssh_proc.returncode}): "
-                    f"{ssh_stderr.decode(errors='replace').strip()}"
-                )
+                try:
+                    ssh_proc = subprocess.Popen(
+                        ssh_cmd, stdin=tar_proc.stdout, stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                except Exception:
+                    tar_proc.kill()
+                    tar_proc.wait()
+                    raise
+
+                # Allow tar_proc to receive SIGPIPE if ssh_proc exits early
+                tar_proc.stdout.close()
+
+                try:
+                    _, ssh_stderr = ssh_proc.communicate(timeout=120)
+                    # Use communicate() instead of wait() to drain stderr and
+                    # avoid deadlock if tar produces more than PIPE_BUF of errors.
+                    tar_stderr_raw = b""
+                    if tar_proc.poll() is None:
+                        _, tar_stderr_raw = tar_proc.communicate(timeout=10)
+                    else:
+                        tar_stderr_raw = tar_proc.stderr.read() if tar_proc.stderr else b""
+                except subprocess.TimeoutExpired:
+                    tar_proc.kill()
+                    ssh_proc.kill()
+                    tar_proc.wait()
+                    ssh_proc.wait()
+                    raise RuntimeError("SSH bulk upload timed out")
+
+                if tar_proc.returncode != 0:
+                    raise RuntimeError(
+                        f"tar create failed (rc={tar_proc.returncode}): "
+                        f"{tar_stderr_raw.decode(errors='replace').strip()}"
+                    )
+                if ssh_proc.returncode != 0:
+                    raise RuntimeError(
+                        f"tar extract over SSH failed (rc={ssh_proc.returncode}): "
+                        f"{ssh_stderr.decode(errors='replace').strip()}"
+                    )
 
         logger.debug("SSH: bulk-uploaded %d file(s) via tar pipe", len(files))
 

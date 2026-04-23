@@ -20,6 +20,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from hermes_constants import get_hermes_home
+from tools.windows_compat import safe_kill, get_state_dir
 from typing import Any, Optional
 
 _GATEWAY_KIND = "hermes-gateway"
@@ -45,8 +46,7 @@ def _get_lock_dir() -> Path:
     override = os.getenv("HERMES_GATEWAY_LOCK_DIR")
     if override:
         return Path(override)
-    state_home = Path(os.getenv("XDG_STATE_HOME", Path.home() / ".local" / "state"))
-    return state_home / "hermes" / _LOCKS_DIRNAME
+    return get_state_dir() / _LOCKS_DIRNAME
 
 
 def _utc_now_iso() -> str:
@@ -59,25 +59,9 @@ def terminate_pid(pid: int, *, force: bool = False) -> None:
     POSIX uses SIGTERM/SIGKILL. Windows uses taskkill /T /F for true force-kill
     because os.kill(..., SIGTERM) is not equivalent to a tree-killing hard stop.
     """
-    if force and _IS_WINDOWS:
-        try:
-            result = subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-        except FileNotFoundError:
-            os.kill(pid, signal.SIGTERM)
-            return
-
-        if result.returncode != 0:
-            details = (result.stderr or result.stdout or "").strip()
-            raise OSError(details or f"taskkill failed for PID {pid}")
-        return
-
-    sig = signal.SIGTERM if not force else getattr(signal, "SIGKILL", signal.SIGTERM)
-    os.kill(pid, sig)
+    sig_name = "SIGKILL" if force else "SIGTERM"
+    if not safe_kill(pid, sig_name):
+        raise OSError(f"Failed to terminate PID {pid}")
 
 
 def _scope_hash(identity: str) -> str:

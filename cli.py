@@ -8646,7 +8646,9 @@ class HermesCLI:
             msg = f"\n{agent_name} has been suspended. Run `fg` to bring {agent_name} back."
             def _suspend():
                 os.write(1, msg.encode())
-                os.kill(0, _sig.SIGTSTP)
+                # SIGTSTP doesn't exist on Windows - skip suspend feature
+                if hasattr(_sig, 'SIGTSTP'):
+                    os.kill(0, _sig.SIGTSTP)
             run_in_terminal(_suspend)
 
         # Voice push-to-talk key: configurable via config.yaml (voice.record_key)

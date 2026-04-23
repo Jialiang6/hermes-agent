@@ -82,6 +82,12 @@ from tools.browser_providers.browserbase import BrowserbaseProvider
 from tools.browser_providers.browser_use import BrowserUseProvider
 from tools.browser_providers.firecrawl import FirecrawlProvider
 from tools.tool_backend_helpers import normalize_browser_cloud_provider
+from tools.windows_compat import (
+    is_windows,
+    safe_kill,
+    join_path_list,
+    get_sane_path_str,
+)
 
 # Camofox local anti-detection browser backend (optional).
 # When CAMOFOX_URL is set, all browser operations route through the
@@ -94,11 +100,8 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Standard PATH entries for environments with minimal PATH (e.g. systemd services).
-# Includes macOS Homebrew paths (/opt/homebrew/* for Apple Silicon).
-_SANE_PATH = (
-    "/opt/homebrew/bin:/opt/homebrew/sbin:"
-    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-)
+# Uses platform-appropriate paths from windows_compat module.
+_SANE_PATH = get_sane_path_str()
 
 
 @functools.lru_cache(maxsize=1)
@@ -108,7 +111,13 @@ def _discover_homebrew_node_dirs() -> tuple[str, ...]:
     When Node is installed via ``brew install node@24`` and NOT linked into
     /opt/homebrew/bin, agent-browser isn't discoverable on the default PATH.
     This function finds those directories so they can be prepended.
+    
+    Note: Homebrew is macOS-only. Returns empty tuple on Windows.
     """
+    # Homebrew doesn't exist on Windows
+    if is_windows():
+        return tuple()
+    
     dirs: list[str] = []
     homebrew_opt = "/opt/homebrew/opt"
     if not os.path.isdir(homebrew_opt):
@@ -371,7 +380,14 @@ def _socket_safe_tmpdir() -> str:
     Linux ``tempfile.gettempdir()`` already returns ``/tmp``, so this is a
     no-op there.  On macOS we bypass ``TMPDIR`` and use ``/tmp`` directly
     (symlink to ``/private/tmp``, sticky-bit protected, always available).
+    
+    Windows note: Unix domain sockets are not natively supported on Windows.
+    This function returns the standard temp directory. The browser tool uses
+    Named Pipes on Windows via the windows_compat IPC layer instead.
     """
+    if is_windows():
+        # Windows: return standard temp dir; Unix sockets not used
+        return tempfile.gettempdir()
     if sys.platform == "darwin":
         return "/tmp"
     return tempfile.gettempdir()
@@ -543,7 +559,7 @@ def _reap_orphaned_browser_sessions():
 
         # Daemon is alive and not tracked — orphan. Kill it.
         try:
-            os.kill(daemon_pid, signal.SIGTERM)
+            safe_kill(daemon_pid, "SIGTERM")
             logger.info("Reaped orphaned browser daemon PID %d (session %s)",
                         daemon_pid, session_name)
             reaped += 1
@@ -948,10 +964,20 @@ def _extract_screenshot_path_from_text(text: str) -> Optional[str]:
     if not text:
         return None
 
+    # Patterns for both Unix and Windows paths
     patterns = [
+        # Unix paths with quotes
         r"Screenshot saved to ['\"](?P<path>/[^'\"]+?\.png)['\"]",
+        # Unix paths without quotes
         r"Screenshot saved to (?P<path>/\S+?\.png)(?:\s|$)",
+        # Unix bare path
         r"(?P<path>/\S+?\.png)(?:\s|$)",
+        # Windows paths with quotes (e.g., C:\path\to\screenshot.png)
+        r"Screenshot saved to ['\"](?P<path>[A-Za-z]:\\[^'\"]+?\.png)['\"]",
+        # Windows paths without quotes
+        r"Screenshot saved to (?P<path>[A-Za-z]:\\\S+?\.png)(?:\s|$)",
+        # Windows bare path
+        r"(?P<path>[A-Za-z]:\\\S+?\.png)(?:\s|$)",
     ]
 
     for pattern in patterns:
@@ -1052,18 +1078,18 @@ def _run_browser_command(
         hermes_node_bin = str(hermes_home / "node" / "bin")
 
         existing_path = browser_env.get("PATH", "")
-        path_parts = [p for p in existing_path.split(":") if p]
+        path_parts = [p for p in existing_path.split(os.pathsep) if p]
         candidate_dirs = (
             [hermes_node_bin]
             + list(_discover_homebrew_node_dirs())
-            + [p for p in _SANE_PATH.split(":") if p]
+            + [p for p in _SANE_PATH.split(os.pathsep) if p]
         )
 
         for part in reversed(candidate_dirs):
             if os.path.isdir(part) and part not in path_parts:
                 path_parts.insert(0, part)
 
-        browser_env["PATH"] = ":".join(path_parts)
+        browser_env["PATH"] = join_path_list(*path_parts)
         browser_env["AGENT_BROWSER_SOCKET_DIR"] = task_socket_dir
         
         # Use temp files for stdout/stderr instead of pipes.
@@ -2180,7 +2206,7 @@ def cleanup_browser(task_id: Optional[str] = None) -> None:
                 if os.path.isfile(pid_file):
                     try:
                         daemon_pid = int(Path(pid_file).read_text().strip())
-                        os.kill(daemon_pid, signal.SIGTERM)
+                        safe_kill(daemon_pid, "SIGTERM")
                         logger.debug("Killed daemon pid %s for %s", daemon_pid, session_name)
                     except (ProcessLookupError, ValueError, PermissionError, OSError):
                         logger.debug("Could not kill daemon pid for %s (already dead or inaccessible)", session_name)

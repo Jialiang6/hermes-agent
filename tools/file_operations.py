@@ -28,12 +28,17 @@ Usage:
 import os
 import re
 import difflib
+import shutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 from hermes_constants import get_hermes_home
 from tools.binary_extensions import BINARY_EXTENSIONS
+from tools.windows_compat import (
+    is_windows, is_windows_system_path, shell_quote, detect_shell,
+    WINDOWS_DEVICE_NAMES
+)
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +117,10 @@ def _is_write_denied(path: str) -> bool:
     if safe_root:
         if not (resolved == safe_root or resolved.startswith(safe_root + os.sep)):
             return True
+
+    # 3) Windows system path protection
+    if is_windows_system_path(path):
+        return True
 
     return False
 
@@ -325,6 +334,9 @@ class ShellFileOperations(FileOperations):
     
     Works with ANY terminal backend that has execute(command, cwd) method.
     This includes local, docker, singularity, ssh, modal, and daytona environments.
+    
+    On Windows, uses Python-native operations for file manipulation to avoid
+    Unix shell command dependencies. On Unix, uses shell commands for efficiency.
     """
     
     def __init__(self, terminal_env, cwd: str = None):
@@ -340,12 +352,20 @@ class ShellFileOperations(FileOperations):
         # Determine cwd from various possible sources.
         # IMPORTANT: do NOT fall back to os.getcwd() -- that's the HOST's local
         # path which doesn't exist inside container/cloud backends (modal, docker).
-        # If nothing provides a cwd, use "/" as a safe universal default.
+        # If nothing provides a cwd, use a platform-appropriate default.
         self.cwd = cwd or getattr(terminal_env, 'cwd', None) or \
-                   getattr(getattr(terminal_env, 'config', None), 'cwd', None) or "/"
+                   getattr(getattr(terminal_env, 'config', None), 'cwd', None)
+        if not self.cwd:
+            if is_windows():
+                self.cwd = str(Path.home())
+            else:
+                self.cwd = "/"
         
         # Cache for command availability checks
         self._command_cache: Dict[str, bool] = {}
+        
+        # Detect if we're running in a Unix-like environment (even on Windows with Git Bash)
+        self._use_shell_commands = not is_windows() or self._has_unix_shell()
     
     def _exec(self, command: str, cwd: str = None, timeout: int = None,
               stdin_data: str = None) -> ExecuteResult:
@@ -373,6 +393,37 @@ class ShellFileOperations(FileOperations):
             result = self._exec(f"command -v {cmd} >/dev/null 2>&1 && echo 'yes'")
             self._command_cache[cmd] = result.stdout.strip() == 'yes'
         return self._command_cache[cmd]
+    
+    def _has_unix_shell(self) -> bool:
+        """Check if a Unix-like shell is available (bash, sh, etc.)."""
+        # Check cached result
+        if '_unix_shell' in self._command_cache:
+            return self._command_cache['_unix_shell']
+        
+        # Try to find bash or sh
+        result = self._exec("command -v bash >/dev/null 2>&1 || command -v sh >/dev/null 2>&1")
+        has_shell = result.exit_code == 0
+        self._command_cache['_unix_shell'] = has_shell
+        return has_shell
+    
+    def _is_windows_device_path(self, path: str) -> bool:
+        """Check if path is a Windows device name that should be blocked."""
+        if not is_windows():
+            return False
+        
+        norm_lower = os.path.normpath(path).lower()
+        
+        # Check for Win32 device namespace prefixes
+        if norm_lower.startswith("\\\\.\\") or norm_lower.startswith("\\\\?\\"):
+            return True
+        
+        # Check if basename (without extension) matches a Windows device name
+        basename = os.path.basename(norm_lower)
+        name_without_ext = os.path.splitext(basename)[0].upper()
+        if name_without_ext in WINDOWS_DEVICE_NAMES:
+            return True
+        
+        return False
     
     def _is_likely_binary(self, path: str, content_sample: str = None) -> bool:
         """
@@ -414,41 +465,51 @@ class ShellFileOperations(FileOperations):
         
         This must be done BEFORE shell escaping, since ~ doesn't expand
         inside single quotes.
+        
+        On Windows, uses Python's os.path.expanduser directly.
+        On Unix, falls back to shell expansion for ~user.
         """
         if not path:
             return path
         
         # Handle ~ and ~user
         if path.startswith('~'):
-            # Get home directory via the terminal environment
-            result = self._exec("echo $HOME")
-            if result.exit_code == 0 and result.stdout.strip():
-                home = result.stdout.strip()
-                if path == '~':
-                    return home
-                elif path.startswith('~/'):
-                    return home + path[1:]  # Replace ~ with home
-                # ~username format - extract and validate username before
-                # letting shell expand it (prevent shell injection via
-                # paths like "~; rm -rf /").
-                rest = path[1:]  # strip leading ~
-                slash_idx = rest.find('/')
-                username = rest[:slash_idx] if slash_idx >= 0 else rest
-                if username and re.fullmatch(r'[a-zA-Z0-9._-]+', username):
-                    # Only expand ~username (not the full path) to avoid shell
-                    # injection via path suffixes like "~user/$(malicious)".
-                    expand_result = self._exec(f"echo ~{username}")
-                    if expand_result.exit_code == 0 and expand_result.stdout.strip():
-                        user_home = expand_result.stdout.strip()
-                        suffix = path[1 + len(username):]  # e.g. "/rest/of/path"
-                        return user_home + suffix
+            if is_windows():
+                # On Windows, use Python's expanduser directly
+                return os.path.expanduser(path)
+            else:
+                # Get home directory via the terminal environment
+                result = self._exec("echo $HOME")
+                if result.exit_code == 0 and result.stdout.strip():
+                    home = result.stdout.strip()
+                    if path == '~':
+                        return home
+                    elif path.startswith('~/'):
+                        return home + path[1:]  # Replace ~ with home
+                    # ~username format - extract and validate username before
+                    # letting shell expand it (prevent shell injection via
+                    # paths like "~; rm -rf /").
+                    rest = path[1:]  # strip leading ~
+                    slash_idx = rest.find('/')
+                    username = rest[:slash_idx] if slash_idx >= 0 else rest
+                    if username and re.fullmatch(r'[a-zA-Z0-9._-]+', username):
+                        # Only expand ~username (not the full path) to avoid shell
+                        # injection via path suffixes like "~user/$(malicious)".
+                        expand_result = self._exec(f"echo ~{username}")
+                        if expand_result.exit_code == 0 and expand_result.stdout.strip():
+                            user_home = expand_result.stdout.strip()
+                            suffix = path[1 + len(username):]  # e.g. "/rest/of/path"
+                            return user_home + suffix
         
         return path
     
     def _escape_shell_arg(self, arg: str) -> str:
-        """Escape a string for safe use in shell commands."""
-        # Use single quotes and escape any single quotes in the string
-        return "'" + arg.replace("'", "'\"'\"'") + "'"
+        """Escape a string for safe use in shell commands.
+        
+        Uses shell_quote() from windows_compat which handles both Unix and
+        Windows quoting styles appropriately.
+        """
+        return shell_quote(arg)
     
     def _unified_diff(self, old_content: str, new_content: str, filename: str) -> str:
         """Generate unified diff between old and new content."""
@@ -480,9 +541,21 @@ class ShellFileOperations(FileOperations):
         # Expand ~ and other shell paths
         path = self._expand_path(path)
         
+        # Check for Windows device paths
+        if self._is_windows_device_path(path):
+            return ReadResult(
+                error=f"Cannot read '{path}': this is a Windows device file that would "
+                      "block or produce unexpected results."
+            )
+        
         # Clamp limit
         limit = min(limit, MAX_LINES)
         
+        # Use Python-native operations on Windows without Git Bash
+        if not self._use_shell_commands:
+            return self._read_file_native(path, offset, limit)
+        
+        # Unix shell-based implementation
         # Check if file exists and get size (wc -c is POSIX, works on Linux + macOS)
         stat_cmd = f"wc -c < {self._escape_shell_arg(path)} 2>/dev/null"
         stat_result = self._exec(stat_cmd)
@@ -554,6 +627,77 @@ class ShellFileOperations(FileOperations):
             hint=hint
         )
     
+    def _read_file_native(self, path: str, offset: int, limit: int) -> ReadResult:
+        """Python-native file reading for Windows or environments without shell commands."""
+        try:
+            p = Path(path)
+            if not p.exists():
+                return self._suggest_similar_files(path)
+            
+            if not p.is_file():
+                return ReadResult(error=f"Not a file: {path}")
+            
+            file_size = p.stat().st_size
+            
+            # Check for images
+            if self._is_image(path):
+                return ReadResult(
+                    is_image=True,
+                    is_binary=True,
+                    file_size=file_size,
+                    hint="Image file detected. Use vision_analyze to inspect."
+                )
+            
+            # Read a sample to check for binary content
+            try:
+                with open(p, 'rb') as f:
+                    sample_bytes = f.read(1000)
+                try:
+                    sample = sample_bytes.decode('utf-8', errors='replace')
+                except UnicodeDecodeError:
+                    sample = sample_bytes.decode('latin-1')
+                
+                if self._is_likely_binary(path, sample):
+                    return ReadResult(
+                        is_binary=True,
+                        file_size=file_size,
+                        error="Binary file - cannot display as text."
+                    )
+            except IOError as e:
+                return ReadResult(error=f"Failed to read file: {e}")
+            
+            # Read all lines for pagination
+            try:
+                with open(p, 'r', encoding='utf-8', errors='replace') as f:
+                    all_lines = f.readlines()
+            except IOError as e:
+                return ReadResult(error=f"Failed to read file: {e}")
+            
+            total_lines = len(all_lines)
+            
+            # Apply pagination (1-indexed offset)
+            start_idx = max(0, offset - 1)
+            end_idx = start_idx + limit
+            selected_lines = all_lines[start_idx:end_idx]
+            
+            # Strip newlines and format
+            content = ''.join(selected_lines)
+            
+            truncated = end_idx < total_lines
+            hint = None
+            if truncated:
+                hint = f"Use offset={end_idx + 1} to continue reading (showing {offset}-{end_idx} of {total_lines} lines)"
+            
+            return ReadResult(
+                content=self._add_line_numbers(content, offset),
+                total_lines=total_lines,
+                file_size=file_size,
+                truncated=truncated,
+                hint=hint
+            )
+        except Exception as e:
+            return ReadResult(error=f"Failed to read file: {e}")
+    
     def _suggest_similar_files(self, path: str) -> ReadResult:
         """Suggest similar files when the requested file is not found."""
         dir_path = os.path.dirname(path) or "."
@@ -562,41 +706,74 @@ class ShellFileOperations(FileOperations):
         ext = os.path.splitext(filename)[1].lower()
         lower_name = filename.lower()
 
-        # List files in the target directory
-        ls_cmd = f"ls -1 {self._escape_shell_arg(dir_path)} 2>/dev/null | head -50"
-        ls_result = self._exec(ls_cmd)
-
         scored: list = []  # (score, filepath) — higher is better
-        if ls_result.exit_code == 0 and ls_result.stdout.strip():
-            for f in ls_result.stdout.strip().split('\n'):
-                if not f:
-                    continue
-                lf = f.lower()
-                score = 0
+        
+        # Use Python-native listing on Windows without Git Bash
+        if not self._use_shell_commands:
+            try:
+                dir_p = Path(dir_path)
+                if dir_p.exists() and dir_p.is_dir():
+                    for f in dir_p.iterdir():
+                        if not f.is_file():
+                            continue
+                        fname = f.name
+                        lf = fname.lower()
+                        score = 0
+                        
+                        if lf == lower_name:
+                            score = 100
+                        elif os.path.splitext(fname)[0].lower() == basename_no_ext.lower():
+                            score = 90
+                        elif lf.startswith(lower_name) or lower_name.startswith(lf):
+                            score = 70
+                        elif lower_name in lf:
+                            score = 60
+                        elif lf in lower_name and len(lf) > 2:
+                            score = 40
+                        elif ext and os.path.splitext(fname)[1].lower() == ext:
+                            common = set(lower_name) & set(lf)
+                            if len(common) >= max(len(lower_name), len(lf)) * 0.4:
+                                score = 30
+                        
+                        if score > 0:
+                            scored.append((score, str(f)))
+            except Exception:
+                pass
+        else:
+            # List files in the target directory
+            ls_cmd = f"ls -1 {self._escape_shell_arg(dir_path)} 2>/dev/null | head -50"
+            ls_result = self._exec(ls_cmd)
 
-                # Exact match (shouldn't happen, but guard)
-                if lf == lower_name:
-                    score = 100
-                # Same base name, different extension (e.g. config.yml vs config.yaml)
-                elif os.path.splitext(f)[0].lower() == basename_no_ext.lower():
-                    score = 90
-                # Target is prefix of candidate or vice-versa
-                elif lf.startswith(lower_name) or lower_name.startswith(lf):
-                    score = 70
-                # Substring match (candidate contains query)
-                elif lower_name in lf:
-                    score = 60
-                # Reverse substring (query contains candidate name)
-                elif lf in lower_name and len(lf) > 2:
-                    score = 40
-                # Same extension with some overlap
-                elif ext and os.path.splitext(f)[1].lower() == ext:
-                    common = set(lower_name) & set(lf)
-                    if len(common) >= max(len(lower_name), len(lf)) * 0.4:
-                        score = 30
+            if ls_result.exit_code == 0 and ls_result.stdout.strip():
+                for f in ls_result.stdout.strip().split('\n'):
+                    if not f:
+                        continue
+                    lf = f.lower()
+                    score = 0
 
-                if score > 0:
-                    scored.append((score, os.path.join(dir_path, f)))
+                    # Exact match (shouldn't happen, but guard)
+                    if lf == lower_name:
+                        score = 100
+                    # Same base name, different extension (e.g. config.yml vs config.yaml)
+                    elif os.path.splitext(f)[0].lower() == basename_no_ext.lower():
+                        score = 90
+                    # Target is prefix of candidate or vice-versa
+                    elif lf.startswith(lower_name) or lower_name.startswith(lf):
+                        score = 70
+                    # Substring match (candidate contains query)
+                    elif lower_name in lf:
+                        score = 60
+                    # Reverse substring (query contains candidate name)
+                    elif lf in lower_name and len(lf) > 2:
+                        score = 40
+                    # Same extension with some overlap
+                    elif ext and os.path.splitext(f)[1].lower() == ext:
+                        common = set(lower_name) & set(lf)
+                        if len(common) >= max(len(lower_name), len(lf)) * 0.4:
+                            score = 30
+
+                    if score > 0:
+                        scored.append((score, os.path.join(dir_path, f)))
 
         scored.sort(key=lambda x: -x[0])
         similar = [fp for _, fp in scored[:5]]
@@ -610,9 +787,19 @@ class ShellFileOperations(FileOperations):
         """Read the complete file content as a plain string.
 
         No pagination, no line-number prefixes, no per-line truncation.
-        Uses cat so the full file is returned regardless of size.
+        Uses Python-native reading on Windows, cat on Unix.
         """
         path = self._expand_path(path)
+        
+        # Check for Windows device paths
+        if self._is_windows_device_path(path):
+            return ReadResult(error=f"Cannot read '{path}': Windows device path blocked.")
+        
+        # Use Python-native operations on Windows without Git Bash
+        if not self._use_shell_commands:
+            return self._read_file_raw_native(path)
+        
+        # Unix shell-based implementation
         stat_cmd = f"wc -c < {self._escape_shell_arg(path)} 2>/dev/null"
         stat_result = self._exec(stat_cmd)
         if stat_result.exit_code != 0:
@@ -633,30 +820,117 @@ class ShellFileOperations(FileOperations):
         if cat_result.exit_code != 0:
             return ReadResult(error=f"Failed to read file: {cat_result.stdout}")
         return ReadResult(content=cat_result.stdout, file_size=file_size)
+    
+    def _read_file_raw_native(self, path: str) -> ReadResult:
+        """Python-native raw file reading for Windows."""
+        try:
+            p = Path(path)
+            if not p.exists():
+                return self._suggest_similar_files(path)
+            
+            file_size = p.stat().st_size
+            
+            if self._is_image(path):
+                return ReadResult(is_image=True, is_binary=True, file_size=file_size)
+            
+            # Check for binary content
+            with open(p, 'rb') as f:
+                sample_bytes = f.read(1000)
+            try:
+                sample = sample_bytes.decode('utf-8', errors='replace')
+            except UnicodeDecodeError:
+                sample = sample_bytes.decode('latin-1')
+            
+            if self._is_likely_binary(path, sample):
+                return ReadResult(
+                    is_binary=True, file_size=file_size,
+                    error="Binary file — cannot display as text."
+                )
+            
+            # Read full content
+            with open(p, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+            
+            return ReadResult(content=content, file_size=file_size)
+        except Exception as e:
+            return ReadResult(error=f"Failed to read file: {e}")
 
     def delete_file(self, path: str) -> WriteResult:
-        """Delete a file via rm."""
+        """Delete a file. Uses Python-native operations on Windows."""
         path = self._expand_path(path)
         if _is_write_denied(path):
             return WriteResult(error=f"Delete denied: {path} is a protected path")
+        
+        # Check for Windows device paths
+        if self._is_windows_device_path(path):
+            return WriteResult(error=f"Cannot delete '{path}': Windows device path blocked.")
+        
+        # Use Python-native operations on Windows without Git Bash
+        if not self._use_shell_commands:
+            return self._delete_file_native(path)
+        
         result = self._exec(f"rm -f {self._escape_shell_arg(path)}")
         if result.exit_code != 0:
             return WriteResult(error=f"Failed to delete {path}: {result.stdout}")
         return WriteResult()
+    
+    def _delete_file_native(self, path: str) -> WriteResult:
+        """Python-native file deletion for Windows."""
+        try:
+            p = Path(path)
+            if not p.exists():
+                return WriteResult(error=f"File not found: {path}")
+            if p.is_file():
+                p.unlink(missing_ok=True)
+                return WriteResult()
+            elif p.is_dir():
+                shutil.rmtree(str(p))
+                return WriteResult()
+            else:
+                return WriteResult(error=f"Not a file or directory: {path}")
+        except PermissionError:
+            return WriteResult(error=f"Permission denied: cannot delete {path}")
+        except Exception as e:
+            return WriteResult(error=f"Failed to delete {path}: {e}")
 
     def move_file(self, src: str, dst: str) -> WriteResult:
-        """Move a file via mv."""
+        """Move a file. Uses Python-native operations on Windows."""
         src = self._expand_path(src)
         dst = self._expand_path(dst)
         for p in (src, dst):
             if _is_write_denied(p):
                 return WriteResult(error=f"Move denied: {p} is a protected path")
+        
+        # Check for Windows device paths
+        if self._is_windows_device_path(src) or self._is_windows_device_path(dst):
+            return WriteResult(error="Cannot move: Windows device path blocked.")
+        
+        # Use Python-native operations on Windows without Git Bash
+        if not self._use_shell_commands:
+            return self._move_file_native(src, dst)
+        
         result = self._exec(
             f"mv {self._escape_shell_arg(src)} {self._escape_shell_arg(dst)}"
         )
         if result.exit_code != 0:
             return WriteResult(error=f"Failed to move {src} -> {dst}: {result.stdout}")
         return WriteResult()
+    
+    def _move_file_native(self, src: str, dst: str) -> WriteResult:
+        """Python-native file move for Windows."""
+        try:
+            src_p = Path(src)
+            dst_p = Path(dst)
+            if not src_p.exists():
+                return WriteResult(error=f"Source not found: {src}")
+            # Create destination parent directory if needed
+            dst_p.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src_p), str(dst_p))
+            return WriteResult()
+        except PermissionError:
+            return WriteResult(error=f"Permission denied: cannot move {src} -> {dst}")
+        except Exception as e:
+            return WriteResult(error=f"Failed to move {src} -> {dst}: {e}")
 
     # =========================================================================
     # WRITE Implementation
@@ -666,9 +940,8 @@ class ShellFileOperations(FileOperations):
         """
         Write content to a file, creating parent directories as needed.
 
-        Pipes content through stdin to avoid OS ARG_MAX limits on large
-        files. The content never appears in the shell command string —
-        only the file path does.
+        On Unix, pipes content through stdin to avoid OS ARG_MAX limits on large
+        files. On Windows, uses Python-native file writing.
 
         Args:
             path: File path to write
@@ -683,7 +956,16 @@ class ShellFileOperations(FileOperations):
         # Block writes to sensitive paths
         if _is_write_denied(path):
             return WriteResult(error=f"Write denied: '{path}' is a protected system/credential file.")
+        
+        # Check for Windows device paths
+        if self._is_windows_device_path(path):
+            return WriteResult(error=f"Cannot write to '{path}': Windows device path blocked.")
 
+        # Use Python-native operations on Windows without Git Bash
+        if not self._use_shell_commands:
+            return self._write_file_native(path, content)
+
+        # Unix shell-based implementation
         # Create parent directories
         parent = os.path.dirname(path)
         dirs_created = False
@@ -716,6 +998,28 @@ class ShellFileOperations(FileOperations):
             dirs_created=dirs_created
         )
     
+    def _write_file_native(self, path: str, content: str) -> WriteResult:
+        """Python-native file writing for Windows."""
+        try:
+            p = Path(path)
+            
+            # Create parent directories if needed
+            dirs_created = False
+            if p.parent and not p.parent.exists():
+                p.parent.mkdir(parents=True, exist_ok=True)
+                dirs_created = True
+            
+            # Write content
+            with open(p, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            bytes_written = len(content.encode('utf-8'))
+            return WriteResult(bytes_written=bytes_written, dirs_created=dirs_created)
+        except PermissionError:
+            return WriteResult(error=f"Permission denied: cannot write to {path}")
+        except Exception as e:
+            return WriteResult(error=f"Failed to write file: {e}")
+    
     # =========================================================================
     # PATCH Implementation (Replace Mode)
     # =========================================================================
@@ -740,15 +1044,30 @@ class ShellFileOperations(FileOperations):
         # Block writes to sensitive paths
         if _is_write_denied(path):
             return PatchResult(error=f"Write denied: '{path}' is a protected system/credential file.")
+        
+        # Check for Windows device paths
+        if self._is_windows_device_path(path):
+            return PatchResult(error=f"Cannot patch '{path}': Windows device path blocked.")
 
         # Read current content
-        read_cmd = f"cat {self._escape_shell_arg(path)} 2>/dev/null"
-        read_result = self._exec(read_cmd)
-        
-        if read_result.exit_code != 0:
-            return PatchResult(error=f"Failed to read file: {path}")
-        
-        content = read_result.stdout
+        if not self._use_shell_commands:
+            # Python-native read
+            try:
+                p = Path(path)
+                if not p.exists():
+                    return PatchResult(error=f"File not found: {path}")
+                content = p.read_text(encoding='utf-8', errors='replace')
+            except Exception as e:
+                return PatchResult(error=f"Failed to read file: {e}")
+        else:
+            # Unix shell-based read
+            read_cmd = f"cat {self._escape_shell_arg(path)} 2>/dev/null"
+            read_result = self._exec(read_cmd)
+            
+            if read_result.exit_code != 0:
+                return PatchResult(error=f"Failed to read file: {path}")
+            
+            content = read_result.stdout
         
         # Import and use fuzzy matching
         from tools.fuzzy_match import fuzzy_find_and_replace
@@ -870,37 +1189,62 @@ class ShellFileOperations(FileOperations):
         path = self._expand_path(path)
         
         # Validate that the path exists before searching
-        check = self._exec(f"test -e {self._escape_shell_arg(path)} && echo exists || echo not_found")
-        if "not_found" in check.stdout:
-            # Try to suggest nearby paths
-            parent = os.path.dirname(path) or "."
-            basename_query = os.path.basename(path)
-            hint_parts = [f"Path not found: {path}"]
-            # Check if parent directory exists and list similar entries
-            parent_check = self._exec(
-                f"test -d {self._escape_shell_arg(parent)} && echo yes || echo no"
-            )
-            if "yes" in parent_check.stdout and basename_query:
-                ls_result = self._exec(
-                    f"ls -1 {self._escape_shell_arg(parent)} 2>/dev/null | head -20"
-                )
-                if ls_result.exit_code == 0 and ls_result.stdout.strip():
-                    lower_q = basename_query.lower()
+        if not self._use_shell_commands:
+            # Python-native path validation
+            if not Path(path).exists():
+                # Try to suggest nearby paths
+                parent = os.path.dirname(path) or "."
+                basename_query = os.path.basename(path)
+                hint_parts = [f"Path not found: {path}"]
+                parent_p = Path(parent)
+                if parent_p.exists() and parent_p.is_dir() and basename_query:
                     candidates = []
-                    for entry in ls_result.stdout.strip().split('\n'):
-                        if not entry:
-                            continue
-                        le = entry.lower()
+                    lower_q = basename_query.lower()
+                    for entry in parent_p.iterdir():
+                        le = entry.name.lower()
                         if lower_q in le or le in lower_q or le.startswith(lower_q[:3]):
-                            candidates.append(os.path.join(parent, entry))
+                            candidates.append(str(entry))
                     if candidates:
                         hint_parts.append(
                             "Similar paths: " + ", ".join(candidates[:5])
                         )
-            return SearchResult(
-                error=". ".join(hint_parts),
-                total_count=0
-            )
+                return SearchResult(
+                    error=". ".join(hint_parts),
+                    total_count=0
+                )
+        else:
+            # Unix shell-based path validation
+            check = self._exec(f"test -e {self._escape_shell_arg(path)} && echo exists || echo not_found")
+            if "not_found" in check.stdout:
+                # Try to suggest nearby paths
+                parent = os.path.dirname(path) or "."
+                basename_query = os.path.basename(path)
+                hint_parts = [f"Path not found: {path}"]
+                # Check if parent directory exists and list similar entries
+                parent_check = self._exec(
+                    f"test -d {self._escape_shell_arg(parent)} && echo yes || echo no"
+                )
+                if "yes" in parent_check.stdout and basename_query:
+                    ls_result = self._exec(
+                        f"ls -1 {self._escape_shell_arg(parent)} 2>/dev/null | head -20"
+                    )
+                    if ls_result.exit_code == 0 and ls_result.stdout.strip():
+                        lower_q = basename_query.lower()
+                        candidates = []
+                        for entry in ls_result.stdout.strip().split('\n'):
+                            if not entry:
+                                continue
+                            le = entry.lower()
+                            if lower_q in le or le in lower_q or le.startswith(lower_q[:3]):
+                                candidates.append(os.path.join(parent, entry))
+                        if candidates:
+                            hint_parts.append(
+                                "Similar paths: " + ", ".join(candidates[:5])
+                            )
+                return SearchResult(
+                    error=". ".join(hint_parts),
+                    total_count=0
+                )
         
         if target == "files":
             return self._search_files(pattern, path, limit, offset)
@@ -915,6 +1259,10 @@ class ShellFileOperations(FileOperations):
             search_pattern = pattern
         else:
             search_pattern = pattern.split('/')[-1]
+        
+        # Use Python-native operations on Windows without Git Bash
+        if not self._use_shell_commands:
+            return self._search_files_native(search_pattern, path, limit, offset)
 
         # Prefer ripgrep: respects .gitignore, excludes hidden dirs by
         # default, and has parallel directory traversal (~200x faster than
@@ -957,6 +1305,50 @@ class ShellFileOperations(FileOperations):
         return SearchResult(
             files=files,
             total_count=len(files)
+        )
+    
+    def _search_files_native(self, pattern: str, path: str, limit: int, offset: int) -> SearchResult:
+        """Python-native file search for Windows."""
+        import fnmatch
+        
+        files = []
+        base_path = Path(path)
+        
+        if not base_path.exists():
+            return SearchResult(error=f"Path not found: {path}", total_count=0)
+        
+        # Walk the directory tree
+        try:
+            for root, dirs, filenames in os.walk(str(base_path)):
+                # Skip hidden directories
+                dirs[:] = [d for d in dirs if not d.startswith('.')]
+                
+                for filename in filenames:
+                    if fnmatch.fnmatch(filename.lower(), pattern.lower()):
+                        full_path = os.path.join(root, filename)
+                        files.append(full_path)
+        except PermissionError:
+            pass
+        except Exception:
+            pass
+        
+        # Sort by modification time (most recent first)
+        def get_mtime(f):
+            try:
+                return os.path.getmtime(f)
+            except Exception:
+                return 0
+        
+        files.sort(key=get_mtime, reverse=True)
+        
+        # Apply pagination
+        total = len(files)
+        page = files[offset:offset + limit]
+        
+        return SearchResult(
+            files=page,
+            total_count=total,
+            truncated=total > offset + limit
         )
 
     def _search_files_rg(self, pattern: str, path: str, limit: int, offset: int) -> SearchResult:
@@ -1005,6 +1397,11 @@ class ShellFileOperations(FileOperations):
     def _search_content(self, pattern: str, path: str, file_glob: Optional[str],
                         limit: int, offset: int, output_mode: str, context: int) -> SearchResult:
         """Search for content inside files (grep-like)."""
+        # Use Python-native operations on Windows without Git Bash
+        if not self._use_shell_commands:
+            return self._search_content_native(pattern, path, file_glob, limit, offset,
+                                               output_mode, context)
+        
         # Try ripgrep first (fast), fallback to grep (slower but works)
         if self._has_command('rg'):
             return self._search_with_rg(pattern, path, file_glob, limit, offset, 
@@ -1017,6 +1414,86 @@ class ShellFileOperations(FileOperations):
             return SearchResult(
                 error="Content search requires ripgrep (rg) or grep. "
                       "Install ripgrep: https://github.com/BurntSushi/ripgrep#installation"
+            )
+    
+    def _search_content_native(self, pattern: str, path: str, file_glob: Optional[str],
+                               limit: int, offset: int, output_mode: str, context: int) -> SearchResult:
+        """Python-native content search for Windows."""
+        import fnmatch
+        
+        base_path = Path(path)
+        if not base_path.exists():
+            return SearchResult(error=f"Path not found: {path}", total_count=0)
+        
+        try:
+            regex = re.compile(pattern, re.IGNORECASE)
+        except re.error as e:
+            return SearchResult(error=f"Invalid regex pattern: {e}", total_count=0)
+        
+        matches = []
+        counts = {}
+        files_matched = []
+        
+        # Determine if searching a single file or directory
+        if base_path.is_file():
+            files_to_search = [str(base_path)]
+        else:
+            files_to_search = []
+            try:
+                for root, dirs, filenames in os.walk(str(base_path)):
+                    # Skip hidden directories
+                    dirs[:] = [d for d in dirs if not d.startswith('.')]
+                    
+                    for filename in filenames:
+                        # Apply file glob filter
+                        if file_glob:
+                            if not fnmatch.fnmatch(filename.lower(), file_glob.lower()):
+                                continue
+                        files_to_search.append(os.path.join(root, filename))
+            except PermissionError:
+                pass
+        
+        # Search each file
+        for filepath in files_to_search:
+            try:
+                with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                    lines = f.readlines()
+                
+                file_matches = []
+                for line_num, line in enumerate(lines, start=1):
+                    if regex.search(line):
+                        file_matches.append(SearchMatch(
+                            path=filepath,
+                            line_number=line_num,
+                            content=line.rstrip('\n\r')[:500]
+                        ))
+                
+                if file_matches:
+                    if output_mode == "files_only":
+                        files_matched.append(filepath)
+                    elif output_mode == "count":
+                        counts[filepath] = len(file_matches)
+                    else:
+                        matches.extend(file_matches)
+                        
+            except (IOError, PermissionError, UnicodeDecodeError):
+                # Skip files that can't be read
+                continue
+        
+        # Apply pagination and return results
+        if output_mode == "files_only":
+            total = len(files_matched)
+            page = files_matched[offset:offset + limit]
+            return SearchResult(files=page, total_count=total, truncated=total > offset + limit)
+        elif output_mode == "count":
+            return SearchResult(counts=counts, total_count=sum(counts.values()))
+        else:
+            total = len(matches)
+            page = matches[offset:offset + limit]
+            return SearchResult(
+                matches=page,
+                total_count=total,
+                truncated=total > offset + limit
             )
     
     def _search_with_rg(self, pattern: str, path: str, file_glob: Optional[str],

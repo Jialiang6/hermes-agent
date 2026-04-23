@@ -82,6 +82,8 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+from tools.windows_compat import safe_kill
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -167,9 +169,29 @@ _MAX_INITIAL_CONNECT_RETRIES = 3 # retries for the very first connection attempt
 _MAX_BACKOFF_SECONDS = 60
 
 # Environment variables that are safe to pass to stdio subprocesses
-_SAFE_ENV_KEYS = frozenset({
+# Unix-specific vars
+_UNIX_SAFE_ENV_KEYS = frozenset({
     "PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "SHELL", "TMPDIR",
 })
+# Windows-specific vars (critical for subprocess DLL resolution)
+_WINDOWS_SAFE_ENV_KEYS = frozenset({
+    "PATH", "HOME", "USER", "LANG", "TERM",
+    "SYSTEMROOT",  # Critical for DLL resolution
+    "COMSPEC",     # Command interpreter
+    "TEMP", "TMP", # Temp directories
+    "PATHEXT",     # Executable extensions
+    "PROGRAMFILES", "PROGRAMFILES(X86)",
+    "APPDATA", "LOCALAPPDATA",
+    "HOMEDRIVE", "HOMEPATH",
+    "OS",
+})
+
+# Select platform-appropriate keys
+import sys as _sys
+if _sys.platform == "win32":
+    _SAFE_ENV_KEYS = _WINDOWS_SAFE_ENV_KEYS
+else:
+    _SAFE_ENV_KEYS = _UNIX_SAFE_ENV_KEYS
 
 # Regex for credential patterns to strip from error messages
 _CREDENTIAL_PATTERN = re.compile(
@@ -200,11 +222,19 @@ def _build_safe_env(user_env: Optional[dict]) -> dict:
 
     This prevents accidentally leaking secrets like API keys, tokens, or
     credentials to MCP server subprocesses.
+    
+    On Windows, SYSTEMROOT is always included as it's critical for
+    subprocess DLL resolution.
     """
     env = {}
     for key, value in os.environ.items():
         if key in _SAFE_ENV_KEYS or key.startswith("XDG_"):
             env[key] = value
+    # On Windows, ensure SYSTEMROOT is always present (critical for DLL resolution)
+    if _sys.platform == "win32" and "SYSTEMROOT" not in env:
+        systemroot = os.environ.get("SYSTEMROOT")
+        if systemroot:
+            env["SYSTEMROOT"] = systemroot
     if user_env:
         env.update(user_env)
     return env
@@ -1115,6 +1145,9 @@ def _snapshot_child_pids() -> set:
 
     Uses /proc on Linux, falls back to psutil, then empty set.
     Used by _run_stdio to identify the subprocess spawned by stdio_client.
+    
+    Note: On Windows, psutil is required for this to work since /proc
+    doesn't exist. Without psutil, this function returns an empty set.
     """
     my_pid = os.getpid()
 
@@ -1126,7 +1159,7 @@ def _snapshot_child_pids() -> set:
     except (FileNotFoundError, OSError, ValueError):
         pass
 
-    # Fallback: psutil
+    # Fallback: psutil (required on Windows)
     try:
         import psutil
         return {c.pid for c in psutil.Process(my_pid).children()}
@@ -2228,16 +2261,14 @@ def _kill_orphaned_mcp_children() -> None:
 
     Only kills PIDs tracked in ``_stdio_pids`` — never arbitrary children.
     """
-    import signal as _signal
-    kill_signal = getattr(_signal, "SIGKILL", _signal.SIGTERM)
-
     with _lock:
         pids = list(_stdio_pids)
         _stdio_pids.clear()
 
     for pid in pids:
         try:
-            os.kill(pid, kill_signal)
+            # Use SIGKILL for force-killing orphans; safe_kill handles Windows
+            safe_kill(pid, "SIGKILL")
             logger.debug("Force-killed orphaned MCP stdio process %d", pid)
         except (ProcessLookupError, PermissionError, OSError):
             pass  # Already exited or inaccessible

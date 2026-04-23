@@ -35,6 +35,7 @@ from hermes_cli.setup import (
     prompt, prompt_choice, prompt_yes_no,
 )
 from hermes_cli.colors import Colors, color
+from tools.windows_compat import safe_kill
 
 
 # =============================================================================
@@ -150,11 +151,8 @@ def _request_gateway_self_restart(pid: int) -> bool:
         return False
     if not _is_pid_ancestor_of_current_process(pid):
         return False
-    try:
-        os.kill(pid, signal.SIGUSR1)
-    except (ProcessLookupError, PermissionError, OSError):
-        return False
-    return True
+    # Use safe_kill for cross-platform compatibility
+    return safe_kill(pid, "SIGUSR1")
 
 
 def find_gateway_pids(exclude_pids: set | None = None, all_profiles: bool = False) -> list:
@@ -306,13 +304,15 @@ def stop_profile_gateway() -> bool:
     if pid is None:
         return False
 
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass  # Already gone
-    except PermissionError:
-        print(f"⚠ Permission denied to kill PID {pid}")
-        return False
+    if not safe_kill(pid, "SIGTERM"):
+        # Check if process is already gone
+        try:
+            os.kill(pid, 0)
+        except (ProcessLookupError, PermissionError):
+            pass  # Already gone
+        else:
+            print(f"⚠ Permission denied to kill PID {pid}")
+            return False
 
     # Wait briefly for it to exit
     import time as _time

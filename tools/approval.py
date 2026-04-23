@@ -17,6 +17,8 @@ import threading
 import unicodedata
 from typing import Optional
 
+from tools.windows_compat import WINDOWS_DANGEROUS_COMMANDS, is_windows
+
 logger = logging.getLogger(__name__)
 
 # Per-thread/per-task gateway session identity.
@@ -131,6 +133,9 @@ DANGEROUS_PATTERNS = [
     # content may contain dangerous commands that individual patterns miss.
     (r'\bchmod\s+\+x\b.*[;&|]+\s*\./', "chmod +x followed by immediate execution"),
 ]
+
+# Add Windows-specific dangerous patterns (always loaded but only matched on Windows)
+DANGEROUS_PATTERNS.extend(WINDOWS_DANGEROUS_COMMANDS)
 
 
 def _legacy_pattern_key(pattern: str) -> str:

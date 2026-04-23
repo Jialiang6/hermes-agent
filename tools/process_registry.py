@@ -838,7 +838,10 @@ class ProcessRegistry:
                     ),
                 }
             session.exited = True
-            session.exit_code = -15  # SIGTERM
+            # Use -SIGTERM as exit code convention (negative indicates killed by signal).
+            # On Unix, SIGTERM=15 so this becomes -15.
+            # On Windows, SIGTERM is still defined but the exit code is less meaningful.
+            session.exit_code = -SIGTERM
             self._move_to_finished(session)
             self._write_checkpoint()
             return {"status": "killed", "session_id": session.id}
