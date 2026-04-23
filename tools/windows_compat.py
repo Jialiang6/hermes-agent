@@ -875,6 +875,62 @@ def _detect_unix_shell() -> str:
     return "/bin/sh"
 
 
+def has_git_bash() -> bool:
+    """
+    Check if Git Bash is available on this system.
+
+    On Windows: Checks HERMES_GIT_BASH_PATH env var, PATH, and common
+    installation directories for bash.exe.
+    On Unix: Always returns True (bash/sh is always available).
+
+    Returns:
+        True if a bash shell is available for executing commands.
+    """
+    if not _IS_WINDOWS:
+        return True
+
+    # Check env override first
+    custom = os.environ.get("HERMES_GIT_BASH_PATH")
+    if custom and os.path.isfile(custom):
+        return True
+
+    # Check PATH
+    if shutil.which("bash"):
+        return True
+
+    # Check common Git Bash install locations
+    for candidate in (
+        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Git", "bin", "bash.exe"),
+        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Git", "bin", "bash.exe"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Git", "bin", "bash.exe"),
+    ):
+        if candidate and os.path.isfile(candidate):
+            return True
+
+    return False
+
+
+def shell_quote(arg: str) -> str:
+    """
+    Quote a shell argument for the platform-appropriate shell.
+
+    On Unix or Windows with Git Bash: uses shlex.quote (single-quote style,
+    bash-compatible).
+    On Windows without Git Bash: uses subprocess.list2cmdline (double-quote
+    style, cmd.exe/PowerShell-compatible).
+
+    Args:
+        arg: The argument string to quote.
+
+    Returns:
+        The quoted string safe for embedding in a shell command.
+    """
+    if _IS_WINDOWS and not has_git_bash():
+        return subprocess.list2cmdline([arg])
+    import shlex
+    return shlex.quote(arg)
+
+
 def get_shell_args(shell: str, command: str) -> List[str]:
     """
     Get the arguments to execute a command in a shell.
@@ -885,14 +941,27 @@ def get_shell_args(shell: str, command: str) -> List[str]:
     
     Returns:
         List of arguments for subprocess
+    
+    On Windows:
+        - bash (Git Bash): ["-lic", command]  (login interactive, sources rc files)
+        - PowerShell/pwsh: ["-NoProfile", "-Command", command]
+        - cmd.exe:         ["/d", "/c", command]
+    
+    On Unix:
+        - bash/zsh/sh: ["-c", command]
     """
     shell_name = os.path.basename(shell).lower()
     
     if _IS_WINDOWS:
-        if "powershell" in shell_name or "pwsh" in shell_name:
+        if "bash" in shell_name or "sh" in shell_name:
+            # Git Bash or other Unix-like shells on Windows: use -lic
+            # (login + interactive + command) to source rc files
+            return ["-lic", command]
+        elif "powershell" in shell_name or "pwsh" in shell_name:
             return ["-NoProfile", "-Command", command]
         else:
-            # cmd.exe
-            return ["/d", "/c", command]
+            # cmd.exe — enable delayed expansion (/v:on) so !var!
+            # syntax works for exit-code capture in wrapped commands.
+            return ["/v:on", "/d", "/c", command]
     else:
         return ["-c", command]

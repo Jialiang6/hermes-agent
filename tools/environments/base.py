@@ -1,8 +1,10 @@
 """Base class for all Hermes execution environment backends.
 
-Unified spawn-per-call model: every command spawns a fresh ``bash -c`` process.
-A session snapshot (env vars, functions, aliases) is captured once at init and
-re-sourced before each command. CWD persists via in-band stdout markers (remote)
+Unified spawn-per-call model: every command spawns a fresh shell process.
+On Unix (or Windows with Git Bash), ``bash -c`` is used; on Windows without
+Git Bash, PowerShell or cmd.exe is used instead.  A session snapshot (env
+vars, functions, aliases) is captured once at init and re-sourced before
+each command (bash only). CWD persists via in-band stdout markers (remote)
 or a temp file (local).
 """
 
@@ -20,6 +22,7 @@ from typing import IO, Callable, Protocol
 
 from hermes_constants import get_hermes_home
 from tools.interrupt import is_interrupted
+from tools.windows_compat import is_windows, detect_shell
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +262,39 @@ class BaseEnvironment(ABC):
         self._snapshot_ready = False
 
     # ------------------------------------------------------------------
+    # Shell type helpers
+    # ------------------------------------------------------------------
+
+    def _is_native_windows_shell(self) -> bool:
+        """Return True if running on Windows without Git Bash.
+
+        In this configuration commands are dispatched to PowerShell or
+        cmd.exe, which cannot interpret bash-specific syntax (export -p,
+        source, shopt, etc.).
+        """
+        if not is_windows():
+            return False
+        # On Windows, _find_bash() returns None when no Git Bash is found.
+        # Import locally to avoid circular dependency — _find_bash lives
+        # in local.py which imports BaseEnvironment.
+        from tools.environments.local import _find_bash
+        return _find_bash() is None
+
+    def _get_shell_type(self) -> str:
+        """Return the native shell type when on Windows without Git Bash.
+
+        Returns 'powershell' or 'cmd' based on detect_shell().
+        Returns 'bash' on all other platforms (Unix, or Windows with Git Bash).
+        """
+        if not self._is_native_windows_shell():
+            return "bash"
+        shell = detect_shell()
+        shell_name = os.path.basename(shell).lower()
+        if "powershell" in shell_name or "pwsh" in shell_name:
+            return "powershell"
+        return "cmd"
+
+    # ------------------------------------------------------------------
     # Abstract methods
     # ------------------------------------------------------------------
 
@@ -292,7 +328,31 @@ class BaseEnvironment(ABC):
         Called once after backend construction.  On success, sets
         ``_snapshot_ready = True`` so subsequent commands source the snapshot
         instead of running with ``bash -l``.
+
+        On Windows without Git Bash, the bash snapshot mechanism is
+        unavailable — PowerShell/cmd.exe inherit env vars from the parent
+        process automatically.  We skip snapshot creation and just record
+        the initial CWD.
         """
+        # Windows native shell (PowerShell/cmd.exe) — no snapshot mechanism.
+        # Env vars are inherited from the parent process automatically.
+        if self._is_native_windows_shell():
+            self._snapshot_ready = False
+            # Record the initial CWD so _update_cwd() works for local backends.
+            try:
+                cwd_path = os.getcwd()
+                Path(self._cwd_file).write_text(cwd_path, encoding="utf-8")
+            except OSError:
+                pass
+            self.cwd = cwd_path
+            logger.info(
+                "Session initialized without snapshot (native Windows shell, "
+                "session=%s, cwd=%s)",
+                self._session_id,
+                self.cwd,
+            )
+            return
+
         # Full capture: env vars, functions (filtered), aliases, shell options.
         bootstrap = (
             f"export -p > {self._snapshot_path}\n"
@@ -328,8 +388,68 @@ class BaseEnvironment(ABC):
     # ------------------------------------------------------------------
 
     def _wrap_command(self, command: str, cwd: str) -> str:
-        """Build the full bash script that sources snapshot, cd's, runs command,
-        re-dumps env vars, and emits CWD markers."""
+        """Build the full command wrapper for the target shell.
+
+        On Unix or Windows with Git Bash, this produces a bash script that
+        sources the session snapshot, cd's, runs the command, re-dumps env
+        vars, and emits CWD markers.
+
+        On Windows without Git Bash, it produces a PowerShell or cmd.exe
+        command that cd's, runs the command, writes CWD to a temp file,
+        and emits an stdout CWD marker.  No snapshot sourcing — env vars
+        are inherited from the parent process automatically.
+        """
+        # --- Windows native shell (PowerShell / cmd.exe) ---
+        if self._is_native_windows_shell():
+            shell_type = self._get_shell_type()
+            marker = self._cwd_marker
+
+            if shell_type == "powershell":
+                # PowerShell single-quoting: escape internal single quotes
+                # by doubling them (PowerShell doesn't support \' inside
+                # single-quoted strings).
+                ps_cwd = cwd.replace("'", "''")
+                ps_cmd = command.replace("'", "''")
+                # Build the PowerShell wrapper.  We use ; to chain commands.
+                # -Command receives the full script string as one argument.
+                # Capture exit code immediately after the user command so
+                # that subsequent tracking cmdlets don't overwrite it.
+                parts = [
+                    f"Set-Location -Path '{ps_cwd}'",
+                    f"{ps_cmd}",
+                    f"$__hermes_ec = $LASTEXITCODE",
+                    f"(Get-Location).Path | Set-Content -Path '{self._cwd_file}' -Encoding UTF8",
+                    f"Write-Output ('{marker}' + (Get-Location).Path + '{marker}')",
+                    f"exit $__hermes_ec",
+                ]
+                return "; ".join(parts)
+
+            else:  # cmd.exe
+                # cmd.exe quoting: use subprocess.list2cmdline for robust
+                # quoting of the command string.  For CWD, quote with
+                # double-quotes if it contains spaces.
+                cmd_cwd = cwd
+                if " " in cmd_cwd or cmd_cwd.startswith('"'):
+                    cmd_cwd = subprocess.list2cmdline([cmd_cwd])
+                # Build the cmd.exe wrapper.  We must preserve the command's
+                # exit code while still recording CWD even on failure.
+                # Strategy: cd first, then run command with errorlevel capture
+                # in a sub-script, always write CWD tracking, then exit with
+                # the captured code.
+                # Delayed expansion (!var!) is needed to read errorlevel right
+                # after the command.  We enable it with /v:on.
+                # %cd% expands to the current directory in cmd.exe.
+                parts = [
+                    f"cd /d {cmd_cwd}",
+                    command,
+                    f"set __hermes_ec=!errorlevel!",
+                    f"cd > \"{self._cwd_file}\"",
+                    f"echo {marker}%cd%{marker}",
+                    f"exit /b !__hermes_ec!",
+                ]
+                return " & ".join(parts)
+
+        # --- bash (Unix, or Windows with Git Bash) ---
         escaped = command.replace("'", "'\\''")
 
         parts = []

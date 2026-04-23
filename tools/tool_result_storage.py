@@ -24,7 +24,6 @@ Defense against context-window overflow operates at three levels:
 
 import logging
 import os
-import shlex
 import tempfile
 import uuid
 
@@ -33,6 +32,7 @@ from tools.budget_config import (
     BudgetConfig,
     DEFAULT_BUDGET,
 )
+from tools.windows_compat import is_windows, has_git_bash, shell_quote
 
 logger = logging.getLogger(__name__)
 PERSISTED_OUTPUT_TAG = "<persisted-output>"
@@ -80,14 +80,31 @@ def _heredoc_marker(content: str) -> str:
 
 def _write_to_sandbox(content: str, remote_path: str, env) -> bool:
     """Write content into the sandbox via env.execute(). Returns True on success."""
-    marker = _heredoc_marker(content)
     storage_dir = os.path.dirname(remote_path)
-    cmd = (
-        f"mkdir -p {shlex.quote(storage_dir)} && cat > {shlex.quote(remote_path)} << '{marker}'\n"
-        f"{content}\n"
-        f"{marker}"
-    )
-    result = env.execute(cmd, timeout=30)
+
+    if is_windows() and not has_git_bash():
+        # Windows without Git Bash: use PowerShell commands via stdin piping.
+        # New-Item -ItemType Directory -Force creates the directory
+        # (equivalent to mkdir -p). Content is piped via stdin_data and
+        # read with [Console]::In.ReadToEnd() to avoid shell-escaping
+        # issues and command-line length limits.
+        escaped_dir = storage_dir.replace("'", "''")
+        escaped_path = remote_path.replace("'", "''")
+        cmd = (
+            f"New-Item -ItemType Directory -Force -Path '{escaped_dir}' | Out-Null; "
+            f"[Console]::In.ReadToEnd() | Set-Content -Path '{escaped_path}' -Encoding UTF8"
+        )
+        result = env.execute(cmd, timeout=30, stdin_data=content)
+    else:
+        # Unix or Windows with Git Bash: use bash heredoc (fast, no escaping needed).
+        marker = _heredoc_marker(content)
+        cmd = (
+            f"mkdir -p {shell_quote(storage_dir)} && cat > {shell_quote(remote_path)} << '{marker}'\n"
+            f"{content}\n"
+            f"{marker}"
+        )
+        result = env.execute(cmd, timeout=30)
+
     return result.get("returncode", 1) == 0
 
 

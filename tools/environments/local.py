@@ -1,15 +1,12 @@
 """Local execution environment — spawn-per-call with session snapshot."""
 
 import os
-import platform
 import shutil
 import signal
 import subprocess
 import tempfile
 
 from tools.environments.base import BaseEnvironment, _pipe_stdin
-
-_IS_WINDOWS = platform.system() == "Windows"
 
 # Windows compatibility layer
 from tools.windows_compat import (
@@ -18,6 +15,8 @@ from tools.windows_compat import (
     get_shell_args,
     terminate_process_tree,
 )
+
+_IS_WINDOWS = is_windows()
 
 
 # Hermes-internal env vars that should NOT leak into terminal subprocesses.
@@ -146,11 +145,12 @@ def _sanitize_subprocess_env(base_env: dict | None, extra_env: dict | None = Non
     return sanitized
 
 
-def _find_bash() -> str:
+def _find_bash() -> str | None:
     """Find bash for command execution.
     
     On Unix: Uses bash from PATH, /usr/bin/bash, /bin/bash, $SHELL, or /bin/sh
-    On Windows: Prefers Git Bash, falls back to PowerShell or cmd.exe
+    On Windows: Prefers Git Bash, returns None if not found (callers
+        should fall back to detect_shell() + get_shell_args())
     """
     if not _IS_WINDOWS:
         return (
@@ -178,36 +178,9 @@ def _find_bash() -> str:
         if candidate and os.path.isfile(candidate):
             return candidate
 
-    # Fallback: Use PowerShell or cmd.exe
-    # PowerShell Core (pwsh) is preferred over Windows PowerShell
-    pwsh = shutil.which("pwsh")
-    if pwsh:
-        return pwsh
-    
-    powershell = shutil.which("powershell")
-    if powershell:
-        return powershell
-    
-    # Last resort: cmd.exe
-    cmd = shutil.which("cmd.exe")
-    if cmd:
-        return cmd
-    
-    # Check system paths
-    system_root = os.environ.get("SystemRoot", r"C:\Windows")
-    for candidate in [
-        os.path.join(system_root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-        os.path.join(system_root, "System32", "cmd.exe"),
-    ]:
-        if os.path.isfile(candidate):
-            return candidate
-
-    raise RuntimeError(
-        "No shell found on Windows. Install one of:\n"
-        "  • Git for Windows: https://git-scm.com/download/win\n"
-        "  • PowerShell Core: https://github.com/PowerShell/PowerShell\n"
-        "Or set HERMES_GIT_BASH_PATH to your bash.exe location."
-    )
+    # No Git Bash available — return None so callers can fall back to
+    # PowerShell/cmd.exe via detect_shell() + get_shell_args().
+    return None
 
 
 def _find_shell() -> str:
@@ -311,8 +284,11 @@ class LocalEnvironment(BaseEnvironment):
             converted = self._win_path_to_posix(candidate)
             if converted:
                 return converted
-            # cygpath unavailable: fall back to /tmp rather than returning a
-            # path that bash would misinterpret (C: treated as var assignment)
+            # cygpath unavailable: if we have Git Bash the caller will
+            # convert later; otherwise return the native Windows path
+            # (safe for PowerShell/cmd.exe) since /tmp doesn't exist.
+            if _IS_WINDOWS and not _find_bash():
+                return candidate
             return "/tmp"
 
         # Try tempfile.gettempdir() as fallback
@@ -326,16 +302,28 @@ class LocalEnvironment(BaseEnvironment):
             converted = self._win_path_to_posix(candidate)
             if converted:
                 return converted
+            if _IS_WINDOWS and not _find_bash():
+                return candidate
             return "/tmp"
 
-        # Last resort: /tmp (may not exist on Windows, but callers handle errors)
+        # Last resort
+        if _IS_WINDOWS:
+            return tempfile.gettempdir()
         return "/tmp"
 
     def _run_bash(self, cmd_string: str, *, login: bool = False,
                   timeout: int = 120,
                   stdin_data: str | None = None) -> subprocess.Popen:
         bash = _find_bash()
-        args = [bash, "-l", "-c", cmd_string] if login else [bash, "-c", cmd_string]
+        if bash:
+            args = [bash, "-l", "-c", cmd_string] if login else [bash, "-c", cmd_string]
+        elif _IS_WINDOWS:
+            # No Git Bash available — fall back to PowerShell/cmd.exe
+            shell = detect_shell()
+            args = [shell] + get_shell_args(shell, cmd_string)
+        else:
+            raise RuntimeError("No bash shell found on this system")
+
         run_env = _make_run_env(self.env)
 
         proc = subprocess.Popen(
@@ -360,7 +348,7 @@ class LocalEnvironment(BaseEnvironment):
         """Kill the entire process group (all children)."""
         try:
             if _IS_WINDOWS:
-                proc.terminate()
+                terminate_process_tree(proc.pid)
             else:
                 pgid = os.getpgid(proc.pid)
                 os.killpg(pgid, signal.SIGTERM)

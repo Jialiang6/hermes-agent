@@ -19,11 +19,10 @@ import asyncio
 import json
 import logging
 import os
-import platform
+from tools.windows_compat import is_windows, terminate_process_tree
 import re
 import subprocess
 
-_IS_WINDOWS = platform.system() == "Windows"
 from pathlib import Path
 from typing import Dict, Optional, Any
 
@@ -35,7 +34,7 @@ logger = logging.getLogger(__name__)
 def _kill_port_process(port: int) -> None:
     """Kill any process listening on the given TCP port."""
     try:
-        if _IS_WINDOWS:
+        if is_windows():
             # Use netstat to find the PID bound to this port, then taskkill
             result = subprocess.run(
                 ["netstat", "-ano", "-p", "TCP"],
@@ -372,7 +371,8 @@ class WhatsAppAdapter(BasePlatformAdapter):
                 ],
                 stdout=bridge_log_fh,
                 stderr=bridge_log_fh,
-                preexec_fn=None if _IS_WINDOWS else os.setsid,
+                preexec_fn=None if is_windows() else os.setsid,
+                creationflags=subprocess.CREATE_NO_WINDOW if is_windows() and hasattr(subprocess, 'CREATE_NO_WINDOW') else 0,
                 env=bridge_env,
             )
             
@@ -490,8 +490,8 @@ class WhatsAppAdapter(BasePlatformAdapter):
                 # Kill the entire process group so child node processes die too
                 import signal
                 try:
-                    if _IS_WINDOWS:
-                        self._bridge_process.terminate()
+                    if is_windows():
+                        terminate_process_tree(self._bridge_process.pid)
                     else:
                         os.killpg(os.getpgid(self._bridge_process.pid), signal.SIGTERM)
                 except (ProcessLookupError, PermissionError):
@@ -499,8 +499,8 @@ class WhatsAppAdapter(BasePlatformAdapter):
                 await asyncio.sleep(1)
                 if self._bridge_process.poll() is None:
                     try:
-                        if _IS_WINDOWS:
-                            self._bridge_process.kill()
+                        if is_windows():
+                            terminate_process_tree(self._bridge_process.pid, force=True)
                         else:
                             os.killpg(os.getpgid(self._bridge_process.pid), signal.SIGKILL)
                     except (ProcessLookupError, PermissionError):

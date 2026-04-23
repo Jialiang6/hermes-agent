@@ -13,7 +13,7 @@ This module provides:
 """
 
 import os
-import platform
+from tools.windows_compat import is_windows
 import re
 import stat
 import subprocess
@@ -25,7 +25,7 @@ from typing import Dict, Any, Optional, List, Tuple
 
 from tools.tool_backend_helpers import managed_nous_tools_enabled as _managed_nous_tools_enabled
 
-_IS_WINDOWS = platform.system() == "Windows"
+# Platform detection — canonical via tools.windows_compat
 _ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # Env var names written to .env that aren't in OPTIONAL_ENV_VARS
 # (managed by setup/provider flows directly).
@@ -2639,7 +2639,7 @@ def load_env() -> Dict[str, str]:
     if env_path.exists():
         # On Windows, open() defaults to the system locale (cp1252) which can
         # fail on UTF-8 .env files. Use explicit UTF-8 only on Windows.
-        open_kw = {"encoding": "utf-8", "errors": "replace"} if _IS_WINDOWS else {}
+        open_kw = {"encoding": "utf-8", "errors": "replace"} if is_windows() else {}
         with open(env_path, **open_kw) as f:
             raw_lines = f.readlines()
         # Sanitize before parsing: split concatenated lines & drop stale
@@ -2715,8 +2715,8 @@ def sanitize_env_file() -> int:
     if not env_path.exists():
         return 0
 
-    read_kw = {"encoding": "utf-8", "errors": "replace"} if _IS_WINDOWS else {}
-    write_kw = {"encoding": "utf-8"} if _IS_WINDOWS else {}
+    read_kw = {"encoding": "utf-8", "errors": "replace"} if is_windows() else {}
+    write_kw = {"encoding": "utf-8"} if is_windows() else {}
 
     with open(env_path, **read_kw) as f:
         original_lines = f.readlines()
@@ -2763,8 +2763,8 @@ def save_env_value(key: str, value: str):
     
     # On Windows, open() defaults to the system locale (cp1252) which can
     # cause OSError errno 22 on UTF-8 .env files.
-    read_kw = {"encoding": "utf-8", "errors": "replace"} if _IS_WINDOWS else {}
-    write_kw = {"encoding": "utf-8"} if _IS_WINDOWS else {}
+    read_kw = {"encoding": "utf-8", "errors": "replace"} if is_windows() else {}
+    write_kw = {"encoding": "utf-8"} if is_windows() else {}
 
     lines = []
     if env_path.exists():
@@ -2772,7 +2772,7 @@ def save_env_value(key: str, value: str):
             lines = f.readlines()
         # Sanitize on every read: split concatenated keys, drop stale placeholders
         lines = _sanitize_env_lines(lines)
-    elif _IS_WINDOWS:
+    elif is_windows():
         # Windows first-run defaults: disable CPR (ANSI escape sequences crash the
         # Windows conhost progress bar) and exclude localhost from proxy passthrough.
         lines = [
@@ -2812,7 +2812,7 @@ def save_env_value(key: str, value: str):
     os.environ[key] = value
 
     # Restrict .env permissions to owner-only (contains API keys)
-    if not _IS_WINDOWS:
+    if not is_windows():
         try:
             os.chmod(env_path, stat.S_IRUSR | stat.S_IWUSR)
         except OSError:
@@ -2834,8 +2834,8 @@ def remove_env_value(key: str) -> bool:
         os.environ.pop(key, None)
         return False
 
-    read_kw = {"encoding": "utf-8", "errors": "replace"} if _IS_WINDOWS else {}
-    write_kw = {"encoding": "utf-8"} if _IS_WINDOWS else {}
+    read_kw = {"encoding": "utf-8", "errors": "replace"} if is_windows() else {}
+    write_kw = {"encoding": "utf-8"} if is_windows() else {}
 
     with open(env_path, **read_kw) as f:
         lines = f.readlines()

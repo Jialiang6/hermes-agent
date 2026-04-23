@@ -356,7 +356,7 @@ class TestKillPortProcess:
                 return mock_taskkill
             return MagicMock()
 
-        with patch("gateway.platforms.whatsapp._IS_WINDOWS", True), \
+        with patch("gateway.platforms.whatsapp.is_windows", return_value=True), \
              patch("gateway.platforms.whatsapp.subprocess.run", side_effect=run_side_effect) as mock_run:
             _kill_port_process(3000)
 
@@ -378,7 +378,7 @@ class TestKillPortProcess:
         )
         mock_netstat = MagicMock(stdout=netstat_output)
 
-        with patch("gateway.platforms.whatsapp._IS_WINDOWS", True), \
+        with patch("gateway.platforms.whatsapp.is_windows", return_value=True), \
              patch("gateway.platforms.whatsapp.subprocess.run", return_value=mock_netstat) as mock_run:
             _kill_port_process(3000)
 
@@ -393,7 +393,7 @@ class TestKillPortProcess:
 
         mock_check = MagicMock(returncode=0)
 
-        with patch("gateway.platforms.whatsapp._IS_WINDOWS", False), \
+        with patch("gateway.platforms.whatsapp.is_windows", return_value=False), \
              patch("gateway.platforms.whatsapp.subprocess.run", return_value=mock_check) as mock_run:
             _kill_port_process(3000)
 
@@ -406,7 +406,7 @@ class TestKillPortProcess:
 
         mock_check = MagicMock(returncode=1)  # port not in use
 
-        with patch("gateway.platforms.whatsapp._IS_WINDOWS", False), \
+        with patch("gateway.platforms.whatsapp.is_windows", return_value=False), \
              patch("gateway.platforms.whatsapp.subprocess.run", return_value=mock_check) as mock_run:
             _kill_port_process(3000)
 
@@ -417,7 +417,7 @@ class TestKillPortProcess:
     def test_suppresses_exceptions(self):
         from gateway.platforms.whatsapp import _kill_port_process
 
-        with patch("gateway.platforms.whatsapp._IS_WINDOWS", True), \
+        with patch("gateway.platforms.whatsapp.is_windows", return_value=True), \
              patch("gateway.platforms.whatsapp.subprocess.run", side_effect=OSError("no netstat")):
             _kill_port_process(3000)  # must not raise
 

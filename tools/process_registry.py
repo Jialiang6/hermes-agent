@@ -32,7 +32,6 @@ Usage:
 import json
 import logging
 import os
-import platform
 import shlex
 import signal
 import subprocess
@@ -41,15 +40,16 @@ import threading
 import time
 import uuid
 
-_IS_WINDOWS = platform.system() == "Windows"
-
 # Windows compatibility layer
 from tools.windows_compat import (
     is_windows,
+    get_shell_args,
     terminate_process_tree,
     SIGTERM,
     SIGKILL,
 )
+
+_IS_WINDOWS = is_windows()
 
 from tools.environments.local import _find_shell, _sanitize_subprocess_env
 from dataclasses import dataclass, field
@@ -342,8 +342,12 @@ class ProcessRegistry:
                 user_shell = _find_shell()
                 pty_env = _sanitize_subprocess_env(os.environ, env_vars)
                 pty_env["PYTHONUNBUFFERED"] = "1"
+                if _IS_WINDOWS:
+                    shell_cmd = [user_shell] + get_shell_args(user_shell, command)
+                else:
+                    shell_cmd = [user_shell, "-lic", command]
                 pty_proc = _PtyProcessCls.spawn(
-                    [user_shell, "-lic", command],
+                    shell_cmd,
                     cwd=session.cwd,
                     env=pty_env,
                     dimensions=(30, 120),
@@ -383,8 +387,12 @@ class ProcessRegistry:
         # stdout is a pipe, hiding output from process(action="poll")).
         bg_env = _sanitize_subprocess_env(os.environ, env_vars)
         bg_env["PYTHONUNBUFFERED"] = "1"
+        if _IS_WINDOWS:
+            shell_cmd = [user_shell] + get_shell_args(user_shell, command)
+        else:
+            shell_cmd = [user_shell, "-lic", command]
         proc = subprocess.Popen(
-            [user_shell, "-lic", command],
+            shell_cmd,
             text=True,
             cwd=session.cwd,
             env=bg_env,

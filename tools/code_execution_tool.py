@@ -32,7 +32,6 @@ import base64
 import json
 import logging
 import os
-import platform
 import shlex
 import signal
 import socket
@@ -43,7 +42,6 @@ import threading
 import time
 import uuid
 
-_IS_WINDOWS = platform.system() == "Windows"
 from typing import Any, Dict, List, Optional
 
 # Windows compatibility layer
@@ -55,6 +53,8 @@ from tools.windows_compat import (
     WindowsNamedPipeClient,
     check_named_pipe_requirements,
 )
+
+_IS_WINDOWS = is_windows()
 
 # Availability gate: check platform support
 logger = logging.getLogger(__name__)
