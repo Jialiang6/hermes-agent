@@ -35,7 +35,7 @@ from hermes_cli.setup import (
     prompt, prompt_choice, prompt_yes_no,
 )
 from hermes_cli.colors import Colors, color
-from tools.windows_compat import safe_kill, write_text_utf8, read_text_utf8, get_uid, get_euid, pid_exists
+from tools.windows_compat import safe_kill, write_text_utf8, read_text_utf8, get_uid, get_euid, pid_exists, is_windows
 
 
 # =============================================================================
