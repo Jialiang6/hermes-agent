@@ -165,7 +165,7 @@ def check_for_updates() -> Optional[int]:
     try:
         result = subprocess.run(
             ["git", "rev-list", "--count", "HEAD..origin/main"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
             cwd=str(repo_dir),
         )
         if result.returncode == 0:
@@ -199,7 +199,7 @@ def _git_short_hash(repo_dir: Path, rev: str) -> Optional[str]:
         result = subprocess.run(
             ["git", "rev-parse", "--short=8", rev],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=5,
             cwd=str(repo_dir),
         )
@@ -227,7 +227,7 @@ def get_git_banner_state(repo_dir: Optional[Path] = None) -> Optional[dict]:
         result = subprocess.run(
             ["git", "rev-list", "--count", "origin/main..HEAD"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=5,
             cwd=str(repo_dir),
         )

@@ -377,7 +377,8 @@ class TrajectoryCompressor:
             from openai import OpenAI
             from agent.auxiliary_client import _to_openai_base_url
             self.client = OpenAI(
-                api_key=api_key, base_url=_to_openai_base_url(self.config.base_url))
+                api_key=api_key, base_url=_to_openai_base_url(self.config.base_url),
+                timeout=120)
             # AsyncOpenAI is created lazily in _get_async_client() so it
             # binds to the current event loop — avoids "Event loop is closed"
             # when process_directory() is called multiple times (each call
@@ -401,6 +402,7 @@ class TrajectoryCompressor:
         self.async_client = AsyncOpenAI(
             api_key=self._async_client_api_key,
             base_url=_to_openai_base_url(self.config.base_url),
+            timeout=120,
         )
         return self.async_client
 

@@ -312,7 +312,7 @@ def cmd_install(identifier: str, force: bool = False) -> None:
             result = subprocess.run(
                 ["git", "clone", "--depth", "1", git_url, str(tmp_target)],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=60,
             )
         except FileNotFoundError:
@@ -422,7 +422,7 @@ def cmd_update(name: str) -> None:
         result = subprocess.run(
             ["git", "pull", "--ff-only"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=60,
             cwd=str(target),
         )

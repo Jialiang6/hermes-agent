@@ -549,7 +549,7 @@ def _probe_container(cmd: list, backend: str, via_sudo: bool = False):
     all other exceptions propagate naturally.
     """
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
     except subprocess.TimeoutExpired:
         label = f"sudo {backend}" if via_sudo else backend
         print(
@@ -902,7 +902,7 @@ def cmd_whatsapp(args):
             ["npm", "install"],
             cwd=str(bridge_dir),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=120,
         )
         if result.returncode != 0:
@@ -2979,14 +2979,14 @@ def _build_web_ui(web_dir: Path, *, fatal: bool = False) -> bool:
             print("Install Node.js, then run:  cd web && npm install && npm run build")
         return not fatal
     print("→ Building web UI...")
-    r1 = subprocess.run([npm, "install", "--silent"], cwd=web_dir, capture_output=True, text=True)
+    r1 = subprocess.run([npm, "install", "--silent"], cwd=web_dir, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r1.returncode != 0:
         print(f"  {'✗' if fatal else '⚠'} Web UI npm install failed"
               + ("" if fatal else " (hermes web will not be available)"))
         if fatal:
             print("  Run manually:  cd web && npm install && npm run build")
         return False
-    r2 = subprocess.run([npm, "run", "build"], cwd=web_dir, capture_output=True, text=True)
+    r2 = subprocess.run([npm, "run", "build"], cwd=web_dir, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r2.returncode != 0:
         print(f"  {'✗' if fatal else '⚠'} Web UI build failed"
               + ("" if fatal else " (hermes web will not be available)"))
@@ -3083,7 +3083,7 @@ def _update_via_zip(args):
         # ensurepip before trying the editable install.
         pip_cmd = [sys.executable, "-m", "pip"]
         try:
-            subprocess.run(pip_cmd + ["--version"], cwd=PROJECT_ROOT, check=True, capture_output=True, text=True)
+            subprocess.run(pip_cmd + ["--version"], cwd=PROJECT_ROOT, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
         except subprocess.CalledProcessError:
             subprocess.run(
                 [sys.executable, "-m", "ensurepip", "--upgrade", "--default-pip"],
@@ -3122,7 +3122,7 @@ def _stash_local_changes_if_needed(git_cmd: list[str], cwd: Path) -> Optional[st
         git_cmd + ["status", "--porcelain"],
         cwd=cwd,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         check=True,
     )
     if not status.stdout.strip():
@@ -3136,11 +3136,11 @@ def _stash_local_changes_if_needed(git_cmd: list[str], cwd: Path) -> Optional[st
         git_cmd + ["ls-files", "--unmerged"],
         cwd=cwd,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
     )
     if unmerged.stdout.strip():
         print("→ Clearing unmerged index entries from a previous conflict...")
-        subprocess.run(git_cmd + ["reset"], cwd=cwd, capture_output=True, text=True)
+        subprocess.run(git_cmd + ["reset"], cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     from datetime import datetime, timezone
 
@@ -3155,7 +3155,7 @@ def _stash_local_changes_if_needed(git_cmd: list[str], cwd: Path) -> Optional[st
         git_cmd + ["rev-parse", "--verify", "refs/stash"],
         cwd=cwd,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         check=True,
     ).stdout.strip()
     return stash_ref
@@ -3167,7 +3167,7 @@ def _resolve_stash_selector(git_cmd: list[str], cwd: Path, stash_ref: str) -> Op
         git_cmd + ["stash", "list", "--format=%gd %H"],
         cwd=cwd,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         check=True,
     )
     for line in stash_list.stdout.splitlines():
@@ -3216,7 +3216,7 @@ def _restore_stashed_changes(
         git_cmd + ["stash", "apply", stash_ref],
         cwd=cwd,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
     )
 
     # Check for unmerged (conflicted) files — can happen even when returncode is 0
@@ -3224,7 +3224,7 @@ def _restore_stashed_changes(
         git_cmd + ["diff", "--name-only", "--diff-filter=U"],
         cwd=cwd,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
     )
     has_conflicts = bool(unmerged.stdout.strip())
 
@@ -3270,7 +3270,7 @@ def _restore_stashed_changes(
             git_cmd + ["stash", "drop", stash_selector],
             cwd=cwd,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
         )
         if drop.returncode != 0:
             print("⚠ Local changes were restored, but Hermes couldn't drop the saved stash entry.")
@@ -3306,7 +3306,7 @@ def _get_origin_url(git_cmd: list[str], cwd: Path) -> Optional[str]:
             git_cmd + ["remote", "get-url", "origin"],
             cwd=cwd,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -3339,7 +3339,7 @@ def _has_upstream_remote(git_cmd: list[str], cwd: Path) -> bool:
             git_cmd + ["remote", "get-url", "upstream"],
             cwd=cwd,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
         )
         return result.returncode == 0
     except Exception:
@@ -3353,7 +3353,7 @@ def _add_upstream_remote(git_cmd: list[str], cwd: Path) -> bool:
             git_cmd + ["remote", "add", "upstream", OFFICIAL_REPO_URL],
             cwd=cwd,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
         )
         return result.returncode == 0
     except Exception:
@@ -3367,7 +3367,7 @@ def _count_commits_between(git_cmd: list[str], cwd: Path, base: str, head: str) 
             git_cmd + ["rev-list", "--count", f"{base}..{head}"],
             cwd=cwd,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
         )
         if result.returncode == 0:
             return int(result.stdout.strip())
@@ -3401,7 +3401,7 @@ def _sync_fork_with_upstream(git_cmd: list[str], cwd: Path) -> bool:
             git_cmd + ["push", "origin", "main", "--force-with-lease"],
             cwd=cwd,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
         )
         return result.returncode == 0
     except Exception:
@@ -3648,7 +3648,7 @@ def cmd_update(args):
     if sys.platform == "win32" and git_dir.exists():
         subprocess.run(
             ["git", "-c", "windows.appendAtomically=false", "config", "windows.appendAtomically", "false"],
-            cwd=PROJECT_ROOT, check=False, capture_output=True, text=True
+            cwd=PROJECT_ROOT, check=False, capture_output=True, text=True, encoding="utf-8", errors="replace"
         )
 
     # Build git command once — reused for fork detection and the update itself.
@@ -3678,7 +3678,7 @@ def cmd_update(args):
             git_cmd + ["fetch", "origin"],
             cwd=PROJECT_ROOT,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
         )
         if fetch_result.returncode != 0:
             stderr = fetch_result.stderr.strip()
@@ -3698,7 +3698,7 @@ def cmd_update(args):
             git_cmd + ["rev-parse", "--abbrev-ref", "HEAD"],
             cwd=PROJECT_ROOT,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=True,
         )
         current_branch = result.stdout.strip()
@@ -3716,7 +3716,7 @@ def cmd_update(args):
                 git_cmd + ["checkout", "main"],
                 cwd=PROJECT_ROOT,
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 check=True,
             )
         else:
@@ -3731,7 +3731,7 @@ def cmd_update(args):
             git_cmd + ["rev-list", f"HEAD..origin/{branch}", "--count"],
             cwd=PROJECT_ROOT,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=True,
         )
         commit_count = int(result.stdout.strip())
@@ -3748,7 +3748,7 @@ def cmd_update(args):
             if current_branch not in ("main", "HEAD"):
                 subprocess.run(
                     git_cmd + ["checkout", current_branch],
-                    cwd=PROJECT_ROOT, capture_output=True, text=True, check=False,
+                    cwd=PROJECT_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
                 )
             print("✓ Already up to date!")
             return
@@ -3762,7 +3762,7 @@ def cmd_update(args):
                 git_cmd + ["pull", "--ff-only", "origin", branch],
                 cwd=PROJECT_ROOT,
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
             )
             if pull_result.returncode != 0:
                 # ff-only failed — local and remote have diverged (e.g. upstream
@@ -3773,7 +3773,7 @@ def cmd_update(args):
                     git_cmd + ["reset", "--hard", f"origin/{branch}"],
                     cwd=PROJECT_ROOT,
                     capture_output=True,
-                    text=True,
+                    text=True, encoding="utf-8", errors="replace",
                 )
                 if reset_result.returncode != 0:
                     print(f"✗ Failed to reset to origin/{branch}.")
@@ -3826,7 +3826,7 @@ def cmd_update(args):
             # ensurepip before trying the editable install.
             pip_cmd = [sys.executable, "-m", "pip"]
             try:
-                subprocess.run(pip_cmd + ["--version"], cwd=PROJECT_ROOT, check=True, capture_output=True, text=True)
+                subprocess.run(pip_cmd + ["--version"], cwd=PROJECT_ROOT, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
             except subprocess.CalledProcessError:
                 subprocess.run(
                     [sys.executable, "-m", "ensurepip", "--upgrade", "--default-pip"],
@@ -4018,7 +4018,7 @@ def cmd_update(args):
                     try:
                         result = subprocess.run(
                             scope_cmd + ["list-units", "hermes-gateway*", "--plain", "--no-legend", "--no-pager"],
-                            capture_output=True, text=True, timeout=10,
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
                         )
                         for line in result.stdout.strip().splitlines():
                             parts = line.split()
@@ -4031,12 +4031,12 @@ def cmd_update(args):
                             # Check if active
                             check = subprocess.run(
                                 scope_cmd + ["is-active", svc_name],
-                                capture_output=True, text=True, timeout=5,
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
                             )
                             if check.stdout.strip() == "active":
                                 restart = subprocess.run(
                                     scope_cmd + ["restart", svc_name],
-                                    capture_output=True, text=True, timeout=15,
+                                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
                                 )
                                 if restart.returncode == 0:
                                     restarted_services.append(svc_name)
@@ -4053,7 +4053,7 @@ def cmd_update(args):
                     if plist_path.exists():
                         check = subprocess.run(
                             ["launchctl", "list", get_launchd_label()],
-                            capture_output=True, text=True, timeout=5,
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
                         )
                         if check.returncode == 0:
                             try:

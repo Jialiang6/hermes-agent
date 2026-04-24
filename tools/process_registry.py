@@ -390,11 +390,9 @@ class ProcessRegistry:
             shell_cmd = [user_shell, "-lic", command]
         proc = subprocess.Popen(
             shell_cmd,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             cwd=session.cwd,
             env=bg_env,
-            encoding="utf-8",
-            errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,

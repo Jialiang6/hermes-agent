@@ -138,7 +138,7 @@ def _detect_claude_code_version() -> str:
         try:
             result = _sp.run(
                 [cmd, "--version"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
             )
             if result.returncode == 0 and result.stdout.strip():
                 # Output is like "2.1.74 (Claude Code)" or just "2.1.74"
@@ -372,14 +372,14 @@ def refresh_anthropic_oauth_pure(refresh_token: str, *, use_json: bool = False) 
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
             "client_id": client_id,
-        }).encode()
+        }).encode("utf-8")
         content_type = "application/json"
     else:
         data = urllib.parse.urlencode({
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
             "client_id": client_id,
-        }).encode()
+        }).encode("utf-8")
         content_type = "application/x-www-form-urlencoded"
 
     token_endpoints = [
@@ -399,7 +399,7 @@ def refresh_anthropic_oauth_pure(refresh_token: str, *, use_json: bool = False) 
         )
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
-                result = json.loads(resp.read().decode())
+                result = json.loads(resp.read().decode("utf-8"))
         except Exception as exc:
             last_error = exc
             logger.debug("Anthropic token refresh failed at %s: %s", endpoint, exc)
@@ -625,7 +625,7 @@ def _generate_pkce() -> tuple:
 
     verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode()
     challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(verifier.encode()).digest()
+        hashlib.sha256(verifier.encode("utf-8")).digest()
     ).rstrip(b"=").decode()
     return verifier, challenge
 
@@ -694,7 +694,7 @@ def run_hermes_oauth_login_pure() -> Optional[Dict[str, Any]]:
             "state": state,
             "redirect_uri": _OAUTH_REDIRECT_URI,
             "code_verifier": verifier,
-        }).encode()
+        }).encode("utf-8")
 
         req = urllib.request.Request(
             _OAUTH_TOKEN_URL,
@@ -707,7 +707,7 @@ def run_hermes_oauth_login_pure() -> Optional[Dict[str, Any]]:
         )
 
         with urllib.request.urlopen(req, timeout=15) as resp:
-            result = json.loads(resp.read().decode())
+            result = json.loads(resp.read().decode("utf-8"))
     except Exception as e:
         print(f"Token exchange failed: {e}")
         return None

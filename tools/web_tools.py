@@ -939,7 +939,7 @@ def _exa_extract(urls: List[str]) -> List[Dict[str, Any]]:
     logger.info("Exa extract: %d URL(s)", len(urls))
     response = _get_exa_client().get_contents(
         urls,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
     )
 
     results = []

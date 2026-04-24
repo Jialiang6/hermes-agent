@@ -357,7 +357,8 @@ def revoke():
                 f"https://oauth2.googleapis.com/revoke?token={creds.token}",
                 method="POST",
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
+            ),
+            timeout=30,
         )
         print("Token revoked with Google.")
     except Exception as e:

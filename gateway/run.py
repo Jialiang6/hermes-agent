@@ -2854,7 +2854,7 @@ class GatewayRunner:
                                 stderr=asyncio.subprocess.PIPE,
                             )
                             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-                            output = (stdout or stderr).decode().strip()
+                            output = (stdout or stderr).decode("utf-8", errors="replace").strip()
                             return output if output else "Command returned no output."
                         except asyncio.TimeoutError:
                             return "Quick command timed out (30s)."

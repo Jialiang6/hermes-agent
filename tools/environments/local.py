@@ -253,7 +253,7 @@ class LocalEnvironment(BaseEnvironment):
         """
         try:
             posix = subprocess.check_output(
-                ["cygpath", "-u", win_path], text=True, stderr=subprocess.DEVNULL
+                ["cygpath", "-u", win_path], text=True, encoding="utf-8", errors="replace", stderr=subprocess.DEVNULL
             ).strip()
             if posix.startswith("/") and os.path.isdir(posix):
                 return posix
@@ -335,10 +335,8 @@ class LocalEnvironment(BaseEnvironment):
 
         proc = subprocess.Popen(
             args,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             env=run_env,
-            encoding="utf-8",
-            errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,

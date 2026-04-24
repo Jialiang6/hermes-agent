@@ -140,7 +140,7 @@ def _try_gh_cli_token() -> Optional[str]:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=5,
                 env=clean_env,
             )
@@ -177,7 +177,7 @@ def copilot_device_code_login(
     data = urllib.parse.urlencode({
         "client_id": COPILOT_OAUTH_CLIENT_ID,
         "scope": "read:user",
-    }).encode()
+    }).encode("utf-8")
 
     req = urllib.request.Request(
         device_code_url,
@@ -223,7 +223,7 @@ def copilot_device_code_login(
             "client_id": COPILOT_OAUTH_CLIENT_ID,
             "device_code": device_code,
             "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-        }).encode()
+        }).encode("utf-8")
 
         poll_req = urllib.request.Request(
             access_token_url,

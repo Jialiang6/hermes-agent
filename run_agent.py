@@ -4106,6 +4106,12 @@ class AIAgent:
         return False
 
     def _create_openai_client(self, client_kwargs: dict, *, reason: str, shared: bool) -> Any:
+        # Inject a default timeout (120s) if not already specified.
+        # OpenAI SDK default is 600s (10 min), which causes long hangs on
+        # Windows when DNS/network is flaky.
+        if "timeout" not in client_kwargs:
+            client_kwargs["timeout"] = 120
+
         if self.provider == "copilot-acp" or str(client_kwargs.get("base_url", "")).startswith("acp://copilot"):
             from agent.copilot_acp_client import CopilotACPClient
 

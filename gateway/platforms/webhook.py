@@ -489,7 +489,7 @@ class WebhookAdapter(BasePlatformAdapter):
         gh_sig = request.headers.get("X-Hub-Signature-256", "")
         if gh_sig:
             expected = "sha256=" + hmac.new(
-                secret.encode(), body, hashlib.sha256
+                secret.encode("utf-8"), body, hashlib.sha256
             ).hexdigest()
             return hmac.compare_digest(gh_sig, expected)
 
@@ -502,7 +502,7 @@ class WebhookAdapter(BasePlatformAdapter):
         generic_sig = request.headers.get("X-Webhook-Signature", "")
         if generic_sig:
             expected = hmac.new(
-                secret.encode(), body, hashlib.sha256
+                secret.encode("utf-8"), body, hashlib.sha256
             ).hexdigest()
             return hmac.compare_digest(generic_sig, expected)
 
@@ -601,7 +601,7 @@ class WebhookAdapter(BasePlatformAdapter):
                     content,
                 ],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=30,
             )
             if result.returncode == 0:

@@ -34,7 +34,7 @@ from tools.registry import tool_error
 logger = logging.getLogger(__name__)
 
 _DEFAULT_API_URL = "https://api.hindsight.vectorize.io"
-_DEFAULT_LOCAL_URL = "http://localhost:8888"
+_DEFAULT_LOCAL_URL = "http://127.0.0.1:8888"
 _MIN_CLIENT_VERSION = "0.4.22"
 _VALID_BUDGETS = {"low", "mid", "high"}
 _PROVIDER_DEFAULT_MODELS = {

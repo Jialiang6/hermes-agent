@@ -502,7 +502,7 @@ def seed_profile_skills(profile_dir: Path, quiet: bool = False) -> Optional[dict
              "r = sync_skills(quiet=True); print(json.dumps(r))"],
             env={**os.environ, "HERMES_HOME": str(profile_dir)},
             cwd=str(project_root),
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
         )
         if result.returncode == 0 and result.stdout.strip():
             return json.loads(result.stdout.strip())

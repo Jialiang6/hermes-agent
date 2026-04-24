@@ -634,7 +634,7 @@ async def _send_whatsapp(extra, chat_id, message):
         bridge_port = extra.get("bridge_port", 3000)
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"http://localhost:{bridge_port}/send",
+                f"http://127.0.0.1:{bridge_port}/send",
                 json={"chatId": chat_id, "message": message},
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:

@@ -365,7 +365,7 @@ class QQAdapter(BasePlatformAdapter):
             await self._session.close()
         self._session = None
 
-        self._session = aiohttp.ClientSession()
+        self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
         self._ws = await self._session.ws_connect(
             gateway_url,
             timeout=CONNECT_TIMEOUT_SECONDS,

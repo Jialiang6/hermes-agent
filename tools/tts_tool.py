@@ -153,7 +153,7 @@ def _convert_to_opus(mp3_path: str) -> Optional[str]:
         result = subprocess.run(
             ["ffmpeg", "-i", mp3_path, "-acodec", "libopus",
              "-ac", "1", "-b:a", "64k", "-vbr", "off", ogg_path, "-y"],
-            capture_output=True, timeout=30, text=True,
+            capture_output=True, timeout=30, text=True, encoding="utf-8", errors="replace",
         )
         if result.returncode != 0:
             logger.warning("ffmpeg conversion failed with return code %d: %s", 
@@ -488,7 +488,7 @@ def _generate_neutts(text: str, output_path: str, tts_config: Dict[str, Any]) ->
         "--device", device,
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     if result.returncode != 0:
         stderr = result.stderr.strip()
         # Filter out the "OK:" line from stderr

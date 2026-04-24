@@ -848,7 +848,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 "created": created, "model": model,
                 "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
             }
-            await response.write(f"data: {json.dumps(role_chunk)}\n\n".encode())
+            await response.write(f"data: {json.dumps(role_chunk)}\n\n".encode("utf-8"))
             last_activity = time.monotonic()
 
             # Helper — route a queue item to the correct SSE event.
@@ -864,7 +864,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 if isinstance(item, tuple) and len(item) == 2 and item[0] == "__tool_progress__":
                     event_data = json.dumps(item[1])
                     await response.write(
-                        f"event: hermes.tool.progress\ndata: {event_data}\n\n".encode()
+                        f"event: hermes.tool.progress\ndata: {event_data}\n\n".encode("utf-8")
                     )
                 else:
                     content_chunk = {
@@ -872,7 +872,7 @@ class APIServerAdapter(BasePlatformAdapter):
                         "created": created, "model": model,
                         "choices": [{"index": 0, "delta": {"content": item}, "finish_reason": None}],
                     }
-                    await response.write(f"data: {json.dumps(content_chunk)}\n\n".encode())
+                    await response.write(f"data: {json.dumps(content_chunk)}\n\n".encode("utf-8"))
                 return time.monotonic()
 
             # Stream content chunks as they arrive from the agent
@@ -921,7 +921,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     "total_tokens": usage.get("total_tokens", 0),
                 },
             }
-            await response.write(f"data: {json.dumps(finish_chunk)}\n\n".encode())
+            await response.write(f"data: {json.dumps(finish_chunk)}\n\n".encode("utf-8"))
             await response.write(b"data: [DONE]\n\n")
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
             # Client disconnected mid-stream.  Interrupt the agent so it
@@ -1744,7 +1744,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     await response.write(b": stream closed\n\n")
                     break
                 payload = f"data: {json.dumps(event)}\n\n"
-                await response.write(payload.encode())
+                await response.write(payload.encode("utf-8"))
         except Exception as exc:
             logger.debug("[api_server] SSE stream error for run %s: %s", run_id, exc)
         finally:

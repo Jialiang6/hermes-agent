@@ -198,7 +198,7 @@ class MiniSWERunner:
                     os.getenv("ANTHROPIC_API_KEY",
                               os.getenv("OPENAI_API_KEY", ""))),
             }
-            self.client = OpenAI(**client_kwargs)
+            self.client = OpenAI(timeout=120, **client_kwargs)
         else:
             from agent.auxiliary_client import resolve_provider_client
             self.client, _ = resolve_provider_client("openrouter", model=model)
@@ -209,7 +209,8 @@ class MiniSWERunner:
                 from openai import OpenAI
                 self.client = OpenAI(
                     base_url="https://openrouter.ai/api/v1",
-                    api_key=os.getenv("OPENROUTER_API_KEY", ""))
+                    api_key=os.getenv("OPENROUTER_API_KEY", ""),
+                    timeout=120)
         
         # Environment will be created per-task
         self.env = None

@@ -30,12 +30,12 @@ def refresh_token(token_data: dict) -> dict:
         "client_secret": token_data["client_secret"],
         "refresh_token": token_data["refresh_token"],
         "grant_type": "refresh_token",
-    }).encode()
+    }).encode("utf-8")
 
     req = urllib.request.Request(token_data["token_uri"], data=params)
     try:
-        with urllib.request.urlopen(req) as resp:
-            result = json.loads(resp.read())
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         print(f"ERROR: Token refresh failed (HTTP {e.code}): {body}", file=sys.stderr)

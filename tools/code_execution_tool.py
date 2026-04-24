@@ -297,7 +297,7 @@ def _call(tool_name, args):
     """Send a tool call to the parent process and return the parsed result."""
     conn = _connect()
     request = json.dumps({"tool": tool_name, "args": args}) + "\\n"
-    _send(request.encode())
+    _send(request.encode("utf-8"))
     buf = b""
     while True:
         chunk = _recv(65536)

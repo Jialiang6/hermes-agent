@@ -59,7 +59,7 @@ def _get_service_pids() -> set:
                 result = subprocess.run(
                     scope_args + ["list-units", "hermes-gateway*",
                                   "--plain", "--no-legend", "--no-pager"],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
                 )
                 for line in result.stdout.strip().splitlines():
                     parts = line.split()
@@ -70,7 +70,7 @@ def _get_service_pids() -> set:
                         show = subprocess.run(
                             scope_args + ["show", svc,
                                           "--property=MainPID", "--value"],
-                            capture_output=True, text=True, timeout=5,
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
                         )
                         pid = int(show.stdout.strip())
                         if pid > 0:
@@ -86,7 +86,7 @@ def _get_service_pids() -> set:
             label = get_launchd_label()
             result = subprocess.run(
                 ["launchctl", "list", label],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
             )
             if result.returncode == 0:
                 # Output: "PID\tStatus\tLabel" header, then one data line
@@ -114,7 +114,7 @@ def _get_parent_pid(pid: int) -> int | None:
             result = subprocess.run(
                 ["wmic", "process", "where", f"ProcessId={pid}", "get", "ParentProcessId", "/VALUE"],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=5,
             )
             for line in result.stdout.splitlines():
@@ -129,7 +129,7 @@ def _get_parent_pid(pid: int) -> int | None:
         result = subprocess.run(
             ["ps", "-o", "ppid=", "-p", str(pid)],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=5,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -217,7 +217,7 @@ def find_gateway_pids(exclude_pids: set | None = None, all_profiles: bool = Fals
         if is_windows():
             result = subprocess.run(
                 ["wmic", "process", "get", "ProcessId,CommandLine", "/FORMAT:LIST"],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10
             )
             current_cmd = ""
             for line in result.stdout.split('\n'):
@@ -238,7 +238,7 @@ def find_gateway_pids(exclude_pids: set | None = None, all_profiles: bool = Fals
             result = subprocess.run(
                 ["ps", "eww", "-ax", "-o", "pid=,command="],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=10,
             )
             for line in result.stdout.split('\n'):
@@ -354,7 +354,7 @@ def _wsl_systemd_operational() -> bool:
     try:
         result = subprocess.run(
             ["systemctl", "is-system-running"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
         )
         # "running", "degraded", "starting" all mean systemd is PID 1
         status = result.stdout.strip().lower()
@@ -669,7 +669,7 @@ def get_systemd_linger_status() -> tuple[bool | None, str]:
         result = subprocess.run(
             ["loginctl", "show-user", username, "--property=Linger", "--value"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=False,
             timeout=10,
         )
@@ -1018,7 +1018,7 @@ def _ensure_linger_enabled() -> None:
         result = subprocess.run(
             ["loginctl", "enable-linger", username],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=False,
             timeout=30,
         )
@@ -1180,7 +1180,7 @@ def systemd_status(deep: bool = False, system: bool = False):
         ["is-active", get_service_name()],
         system=system,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         timeout=10,
     )
 
@@ -1516,7 +1516,7 @@ def launchd_status(deep: bool = False):
         result = subprocess.run(
             ["launchctl", "list", label],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=10,
         )
         loaded = result.returncode == 0
@@ -2195,7 +2195,7 @@ def _is_service_running() -> bool:
             try:
                 result = _run_systemctl(
                     ["is-active", get_service_name()],
-                    system=False, capture_output=True, text=True, timeout=10,
+                    system=False, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
                 )
                 if result.stdout.strip() == "active":
                     return True
@@ -2206,7 +2206,7 @@ def _is_service_running() -> bool:
             try:
                 result = _run_systemctl(
                     ["is-active", get_service_name()],
-                    system=True, capture_output=True, text=True, timeout=10,
+                    system=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
                 )
                 if result.stdout.strip() == "active":
                     return True
@@ -2218,7 +2218,7 @@ def _is_service_running() -> bool:
         try:
             result = subprocess.run(
                 ["launchctl", "list", get_launchd_label()],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
             )
             return result.returncode == 0
         except subprocess.TimeoutExpired:

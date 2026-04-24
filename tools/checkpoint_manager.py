@@ -167,7 +167,7 @@ def _run_git(
         result = subprocess.run(
             cmd,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=timeout,
             env=env,
             cwd=str(normalized_working_dir),

@@ -1170,7 +1170,7 @@ def _submit_anthropic_pkce(session_id: str, code_input: str) -> Dict[str, Any]:
         "state": state_from_callback or sess["state"],
         "redirect_uri": _ANTHROPIC_OAUTH_REDIRECT_URI,
         "code_verifier": sess["verifier"],
-    }).encode()
+    }).encode("utf-8")
     req = urllib.request.Request(
         _ANTHROPIC_OAUTH_TOKEN_URL,
         data=exchange_data,

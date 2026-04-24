@@ -23,7 +23,7 @@ def _get_git_commit(project_root: Path) -> str:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--short=8", "HEAD"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
             cwd=str(project_root),
         )
         if result.returncode == 0:
@@ -63,7 +63,7 @@ def _gateway_status() -> str:
         try:
             r = subprocess.run(
                 ["systemctl", "--user", "is-active", svc],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
             )
             return "running (systemd)" if r.stdout.strip() == "active" else "stopped"
         except Exception:
@@ -73,7 +73,7 @@ def _gateway_status() -> str:
             from hermes_cli.gateway import get_launchd_label
             r = subprocess.run(
                 ["launchctl", "list", get_launchd_label()],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
             )
             return "loaded (launchd)" if r.returncode == 0 else "not loaded"
         except Exception:

@@ -53,6 +53,11 @@ from hermes_constants import OPENROUTER_BASE_URL
 
 logger = logging.getLogger(__name__)
 
+# Default timeout for OpenAI client calls (seconds).
+# The OpenAI SDK default is 600s (10 min), which causes long hangs on
+# Windows when DNS/network is flaky. 120s is sufficient for most API calls.
+_DEFAULT_OPENAI_TIMEOUT = 120
+
 # Module-level flag: only warn once per process about stale OPENAI_BASE_URL.
 _stale_base_url_warned = False
 
@@ -726,7 +731,7 @@ def _resolve_api_key_provider() -> Tuple[Optional[OpenAI], Optional[str]]:
                 from hermes_cli.models import copilot_default_headers
 
                 extra["default_headers"] = copilot_default_headers()
-            return OpenAI(api_key=api_key, base_url=base_url, **extra), model
+            return OpenAI(api_key=api_key, base_url=base_url, timeout=_DEFAULT_OPENAI_TIMEOUT, **extra), model
 
         creds = resolve_api_key_provider_credentials(provider_id)
         api_key = str(creds.get("api_key", "")).strip()
@@ -747,7 +752,7 @@ def _resolve_api_key_provider() -> Tuple[Optional[OpenAI], Optional[str]]:
             from hermes_cli.models import copilot_default_headers
 
             extra["default_headers"] = copilot_default_headers()
-        return OpenAI(api_key=api_key, base_url=base_url, **extra), model
+        return OpenAI(api_key=api_key, base_url=base_url, timeout=_DEFAULT_OPENAI_TIMEOUT, **extra), model
 
     return None, None
 
@@ -765,6 +770,7 @@ def _try_openrouter() -> Tuple[Optional[OpenAI], Optional[str]]:
         base_url = _pool_runtime_base_url(entry, OPENROUTER_BASE_URL) or OPENROUTER_BASE_URL
         logger.debug("Auxiliary client: OpenRouter via pool")
         return OpenAI(api_key=or_key, base_url=base_url,
+                       timeout=_DEFAULT_OPENAI_TIMEOUT,
                        default_headers=_OR_HEADERS), _OPENROUTER_MODEL
 
     or_key = os.getenv("OPENROUTER_API_KEY")
@@ -772,6 +778,7 @@ def _try_openrouter() -> Tuple[Optional[OpenAI], Optional[str]]:
         return None, None
     logger.debug("Auxiliary client: OpenRouter")
     return OpenAI(api_key=or_key, base_url=OPENROUTER_BASE_URL,
+                   timeout=_DEFAULT_OPENAI_TIMEOUT,
                    default_headers=_OR_HEADERS), _OPENROUTER_MODEL
 
 
@@ -800,6 +807,7 @@ def _try_nous(vision: bool = False) -> Tuple[Optional[OpenAI], Optional[str]]:
         OpenAI(
             api_key=_nous_api_key(nous),
             base_url=str(nous.get("inference_base_url") or _nous_base_url()).rstrip("/"),
+            timeout=_DEFAULT_OPENAI_TIMEOUT,
         ),
         model,
     )
@@ -914,9 +922,9 @@ def _try_custom_endpoint() -> Tuple[Optional[OpenAI], Optional[str]]:
     model = _read_main_model() or "gpt-4o-mini"
     logger.debug("Auxiliary client: custom endpoint (%s, api_mode=%s)", model, custom_mode or "chat_completions")
     if custom_mode == "codex_responses":
-        real_client = OpenAI(api_key=custom_key, base_url=custom_base)
+        real_client = OpenAI(api_key=custom_key, base_url=custom_base, timeout=_DEFAULT_OPENAI_TIMEOUT)
         return CodexAuxiliaryClient(real_client, model), model
-    return OpenAI(api_key=custom_key, base_url=custom_base), model
+    return OpenAI(api_key=custom_key, base_url=custom_base, timeout=_DEFAULT_OPENAI_TIMEOUT), model
 
 
 def _try_codex() -> Tuple[Optional[Any], Optional[str]]:
@@ -936,7 +944,7 @@ def _try_codex() -> Tuple[Optional[Any], Optional[str]]:
             return None, None
         base_url = _CODEX_AUX_BASE_URL
     logger.debug("Auxiliary client: Codex OAuth (%s via Responses API)", _CODEX_AUX_MODEL)
-    real_client = OpenAI(api_key=codex_token, base_url=base_url)
+    real_client = OpenAI(api_key=codex_token, base_url=base_url, timeout=_DEFAULT_OPENAI_TIMEOUT)
     return CodexAuxiliaryClient(real_client, _CODEX_AUX_MODEL), _CODEX_AUX_MODEL
 
 
@@ -1235,6 +1243,7 @@ def _to_async_client(sync_client, model: str):
     async_kwargs = {
         "api_key": sync_client.api_key,
         "base_url": str(sync_client.base_url),
+        "timeout": _DEFAULT_OPENAI_TIMEOUT,
     }
     base_lower = str(sync_client.base_url).lower()
     if "openrouter" in base_lower:
@@ -1388,7 +1397,7 @@ def resolve_provider_client(
                                "but no Codex OAuth token found (run: hermes model)")
                 return None, None
             final_model = _normalize_resolved_model(model or _CODEX_AUX_MODEL, provider)
-            raw_client = OpenAI(api_key=codex_token, base_url=_CODEX_AUX_BASE_URL)
+            raw_client = OpenAI(api_key=codex_token, base_url=_CODEX_AUX_BASE_URL, timeout=_DEFAULT_OPENAI_TIMEOUT)
             return (raw_client, final_model)
         # Standard path: wrap in CodexAuxiliaryClient adapter
         client, default = _try_codex()
@@ -1425,7 +1434,7 @@ def resolve_provider_client(
             elif "api.githubcopilot.com" in custom_base.lower():
                 from hermes_cli.models import copilot_default_headers
                 extra["default_headers"] = copilot_default_headers()
-            client = OpenAI(api_key=custom_key, base_url=custom_base, **extra)
+            client = OpenAI(api_key=custom_key, base_url=custom_base, timeout=_DEFAULT_OPENAI_TIMEOUT, **extra)
             client = _wrap_if_needed(client, final_model, custom_base)
             return (_to_async_client(client, final_model) if async_mode
                     else (client, final_model))
@@ -1459,7 +1468,7 @@ def resolve_provider_client(
                     model or custom_entry.get("model") or _read_main_model() or "gpt-4o-mini",
                     provider,
                 )
-                client = OpenAI(api_key=custom_key, base_url=custom_base)
+                client = OpenAI(api_key=custom_key, base_url=custom_base, timeout=_DEFAULT_OPENAI_TIMEOUT)
                 client = _wrap_if_needed(client, final_model, custom_base)
                 logger.debug(
                     "resolve_provider_client: named custom provider %r (%s)",
@@ -1526,6 +1535,7 @@ def resolve_provider_client(
             headers.update(copilot_default_headers())
 
         client = OpenAI(api_key=api_key, base_url=base_url,
+                        timeout=_DEFAULT_OPENAI_TIMEOUT,
                         **({"default_headers": headers} if headers else {}))
 
         # Copilot GPT-5+ models (except gpt-5-mini) require the Responses

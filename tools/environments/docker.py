@@ -173,7 +173,7 @@ def _ensure_docker_available() -> None:
         result = subprocess.run(
             [docker_exe, "version"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=5,
         )
     except FileNotFoundError:
@@ -423,7 +423,7 @@ class DockerEnvironment(BaseEnvironment):
         result = subprocess.run(
             run_cmd,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=120,  # image pull may take a while
             check=True,
         )
@@ -507,7 +507,7 @@ class DockerEnvironment(BaseEnvironment):
             docker = find_docker() or "docker"
             result = subprocess.run(
                 [docker, "info", "--format", "{{.Driver}}"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
             )
             driver = result.stdout.strip().lower()
             if driver != "overlay2":
@@ -517,14 +517,14 @@ class DockerEnvironment(BaseEnvironment):
             # Probe by attempting a dry-ish run — the fastest reliable check.
             probe = subprocess.run(
                 [docker, "create", "--storage-opt", "size=1m", "hello-world"],
-                capture_output=True, text=True, timeout=15,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
             )
             if probe.returncode == 0:
                 # Clean up the created container
                 container_id = probe.stdout.strip()
                 if container_id:
                     subprocess.run([docker, "rm", container_id],
-                                   capture_output=True, timeout=5, text=True)
+                                   capture_output=True, timeout=5, text=True, encoding="utf-8", errors="replace")
                 _storage_opt_ok = True
             else:
                 _storage_opt_ok = False
@@ -548,13 +548,13 @@ class DockerEnvironment(BaseEnvironment):
                         try:
                             subprocess.run(
                                 [self._docker_exe, "stop", self._container_id],
-                                capture_output=True, timeout=60, text=True
+                                capture_output=True, timeout=60, text=True, encoding="utf-8", errors="replace"
                             )
                         except Exception:
                             try:
                                 subprocess.run(
                                     [self._docker_exe, "rm", "-f", self._container_id],
-                                    capture_output=True, timeout=10, text=True
+                                    capture_output=True, timeout=10, text=True, encoding="utf-8", errors="replace"
                                 )
                             except Exception:
                                 pass
@@ -581,7 +581,7 @@ class DockerEnvironment(BaseEnvironment):
                             try:
                                 subprocess.run(
                                     [self._docker_exe, "rm", "-f", self._container_id],
-                                    capture_output=True, timeout=10, text=True
+                                    capture_output=True, timeout=10, text=True, encoding="utf-8", errors="replace"
                                 )
                             except Exception:
                                 pass
