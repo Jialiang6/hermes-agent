@@ -5,6 +5,7 @@ without risk of circular imports.
 """
 
 import os
+import sys
 from pathlib import Path
 
 
@@ -181,6 +182,9 @@ def is_wsl() -> bool:
     global _wsl_detected
     if _wsl_detected is not None:
         return _wsl_detected
+    if sys.platform == "win32":
+        _wsl_detected = False
+        return False
     try:
         with open("/proc/version", "r") as f:
             _wsl_detected = "microsoft" in f.read().lower()
@@ -202,6 +206,9 @@ def is_container() -> bool:
     global _container_detected
     if _container_detected is not None:
         return _container_detected
+    if sys.platform == "win32":
+        _container_detected = False
+        return False
     if os.path.exists("/.dockerenv"):
         _container_detected = True
         return True

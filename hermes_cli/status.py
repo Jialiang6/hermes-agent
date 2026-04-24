@@ -13,6 +13,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 from hermes_cli.auth import AuthError, resolve_provider
 from hermes_cli.colors import Colors, color
+from tools.windows_compat import pid_exists
 from hermes_cli.config import get_env_path, get_env_value, get_hermes_home, load_config
 from hermes_cli.models import provider_label
 from hermes_cli.nous_subscription import get_nous_subscription_features
@@ -400,11 +401,10 @@ def show_status(args):
                 _pid_data = _json.loads(_gw_pid_path.read_text(encoding="utf-8"))
                 _gw_pid = _pid_data.get("pid")
                 if _gw_pid:
-                    try:
-                        os.kill(_gw_pid, 0)
+                    if pid_exists(_gw_pid):
                         print(f"  Status:       {check_mark(True)} running")
                         print(f"  PID:          {_gw_pid}")
-                    except (OSError, ProcessLookupError):
+                    else:
                         print(f"  Status:       {check_mark(False)} stopped (stale pid)")
                 else:
                     print(f"  Status:       {check_mark(False)} stopped")

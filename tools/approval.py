@@ -64,10 +64,12 @@ _HERMES_ENV_PATH = (
     r'(?:\$hermes_home|\$\{hermes_home\})/)'
     r'\.env\b'
 )
+_WINDOWS_SYSTEM_WRITE = r'(?:C:\\Windows\\|C:\\Program Files\\|C:\\Program Files \(x86\)\\|\\Windows\\|\\ProgramFiles\\|\\ProgramFiles\(x86\)\\)'
 _SENSITIVE_WRITE_TARGET = (
     r'(?:/etc/|/dev/sd|'
     rf'{_SSH_SENSITIVE_PATH}|'
-    rf'{_HERMES_ENV_PATH})'
+    rf'{_HERMES_ENV_PATH}|'
+    rf'{_WINDOWS_SYSTEM_WRITE})'
 )
 
 # =========================================================================
@@ -134,8 +136,9 @@ DANGEROUS_PATTERNS = [
     (r'\bchmod\s+\+x\b.*[;&|]+\s*\./', "chmod +x followed by immediate execution"),
 ]
 
-# Add Windows-specific dangerous patterns (always loaded but only matched on Windows)
-DANGEROUS_PATTERNS.extend(WINDOWS_DANGEROUS_COMMANDS)
+# Windows-specific dangerous patterns are checked conditionally in
+# detect_dangerous_command only when is_windows() is True, to avoid
+# false positives on Unix systems (e.g. 'format' as a Python string method).
 
 
 def _legacy_pattern_key(pattern: str) -> str:
@@ -194,6 +197,12 @@ def detect_dangerous_command(command: str) -> tuple:
         if re.search(pattern, command_lower, re.IGNORECASE | re.DOTALL):
             pattern_key = description
             return (True, pattern_key, description)
+    # On Windows, additionally check Windows-specific dangerous patterns
+    if is_windows():
+        for pattern, description in WINDOWS_DANGEROUS_COMMANDS:
+            if re.search(pattern, command_lower, re.IGNORECASE | re.DOTALL):
+                pattern_key = description
+                return (True, pattern_key, description)
     return (False, None, None)
 
 

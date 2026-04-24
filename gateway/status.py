@@ -20,7 +20,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from hermes_constants import get_hermes_home
-from tools.windows_compat import safe_kill, get_state_dir, read_text_utf8, write_text_utf8, is_windows
+from tools.windows_compat import safe_kill, pid_exists, get_state_dir, read_text_utf8, write_text_utf8, is_windows
 from typing import Any, Optional
 
 _GATEWAY_KIND = "hermes-gateway"
@@ -323,9 +323,7 @@ def acquire_scoped_lock(scope: str, identity: str, metadata: Optional[dict[str, 
 
         stale = existing_pid is None
         if not stale:
-            try:
-                os.kill(existing_pid, 0)
-            except (ProcessLookupError, PermissionError):
+            if not pid_exists(existing_pid):
                 stale = True
             else:
                 current_start = _get_process_start_time(existing_pid)
@@ -426,9 +424,7 @@ def get_running_pid() -> Optional[int]:
         remove_pid_file()
         return None
 
-    try:
-        os.kill(pid, 0)  # signal 0 = existence check, no actual signal sent
-    except (ProcessLookupError, PermissionError):
+    if not pid_exists(pid):  # Process no longer exists
         remove_pid_file()
         return None
 

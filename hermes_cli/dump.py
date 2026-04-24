@@ -15,6 +15,7 @@ from pathlib import Path
 
 from hermes_cli.config import get_hermes_home, get_env_path, get_project_root, load_config
 from hermes_constants import display_hermes_home
+from tools.windows_compat import pid_exists
 
 
 def _get_git_commit(project_root: Path) -> str:
@@ -85,10 +86,9 @@ def _gateway_status() -> str:
                 data = json.loads(pid_path.read_text(encoding="utf-8"))
                 pid = data.get("pid")
                 if pid:
-                    try:
-                        os.kill(pid, 0)  # Check if process exists
+                    if pid_exists(pid):
                         return f"running (pid {pid})"
-                    except (OSError, ProcessLookupError):
+                    else:
                         return "stopped (stale pid)"
             return "stopped"
         except Exception:

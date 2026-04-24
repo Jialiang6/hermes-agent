@@ -35,7 +35,7 @@ from hermes_cli.setup import (
     prompt, prompt_choice, prompt_yes_no,
 )
 from hermes_cli.colors import Colors, color
-from tools.windows_compat import safe_kill, write_text_utf8, read_text_utf8, get_uid, get_euid
+from tools.windows_compat import safe_kill, write_text_utf8, read_text_utf8, get_uid, get_euid, pid_exists
 
 
 # =============================================================================
@@ -322,21 +322,16 @@ def stop_profile_gateway() -> bool:
 
     if not safe_kill(pid, "SIGTERM"):
         # Check if process is already gone
-        try:
-            os.kill(pid, 0)
-        except (ProcessLookupError, PermissionError):
-            pass  # Already gone
-        else:
+        if pid_exists(pid):
             print(f"⚠ Permission denied to kill PID {pid}")
             return False
 
     # Wait briefly for it to exit
     import time as _time
     for _ in range(20):
-        try:
-            os.kill(pid, 0)
+        if pid_exists(pid):
             _time.sleep(0.5)
-        except (ProcessLookupError, PermissionError):
+        else:
             break
 
     remove_pid_file()
@@ -380,9 +375,6 @@ def supports_systemd_services() -> bool:
 
 def is_macos() -> bool:
     return sys.platform == 'darwin'
-
-def is_windows() -> bool:
-    return sys.platform == 'win32'
 
 
 # =============================================================================

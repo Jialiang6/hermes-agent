@@ -55,6 +55,7 @@ from tools.windows_compat import (
     get_text_open_kwargs,
     decode_utf8,
     encode_utf8,
+    terminate_process_tree,
 )
 
 _IS_WINDOWS = is_windows()
@@ -665,21 +666,27 @@ def _ship_file_to_remote(env, remote_path: str, content: str) -> None:
     )
 
 
-def _is_unix_path(path: str) -> bool:
-    """Check if a path looks like a Unix absolute path (starts with /)."""
-    return isinstance(path, str) and path.startswith("/")
+def _is_absolute_path(path: str) -> bool:
+    """Check if a path is an absolute path (Unix /... or Windows C:\\...)."""
+    if not isinstance(path, str):
+        return False
+    if path.startswith("/"):  # Unix absolute
+        return True
+    if len(path) >= 2 and path[0].isalpha() and path[1] == ':':  # Windows drive letter
+        return True
+    return False
 
 
 def _safe_temp_dir(candidate: str) -> str:
     """Return candidate if it is a valid, writable directory, else fall back."""
-    if _is_unix_path(candidate):
+    if _is_absolute_path(candidate):
         return candidate.rstrip("/") or "/"
     # Windows or other platform: use as-is if directory exists and is writable
     if os.path.isdir(candidate) and os.access(candidate, os.W_OK):
         return candidate
     # Ultimate fallback
     fallback = tempfile.gettempdir()
-    return fallback if not _is_unix_path(fallback) else "/tmp"
+    return fallback if not _is_absolute_path(fallback) else "/tmp"
 
 
 def _env_temp_dir(env: Any) -> str:
@@ -1398,7 +1405,7 @@ def _kill_process_group(proc, escalate: bool = False):
     """Kill the child and its entire process group."""
     try:
         if _IS_WINDOWS:
-            proc.terminate()
+            terminate_process_tree(proc.pid)  # Kill entire process tree
         else:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
     except (ProcessLookupError, PermissionError) as e:
@@ -1415,7 +1422,7 @@ def _kill_process_group(proc, escalate: bool = False):
         except subprocess.TimeoutExpired:
             try:
                 if _IS_WINDOWS:
-                    proc.kill()
+                    terminate_process_tree(proc.pid, force=True)  # Force kill entire tree
                 else:
                     os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             except (ProcessLookupError, PermissionError) as e:

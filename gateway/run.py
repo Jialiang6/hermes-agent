@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from datetime import datetime
 
-from tools.windows_compat import is_windows, add_signal_handler, read_text_utf8, write_text_utf8
+from tools.windows_compat import is_windows, add_signal_handler, read_text_utf8, write_text_utf8, pid_exists
 from typing import Dict, Optional, Any, List
 
 # ---------------------------------------------------------------------------
@@ -55,6 +55,22 @@ def _ensure_ssl_certs() -> None:
         return
     except ImportError:
         pass
+
+    # 2b. Windows: use certifi or common Windows cert paths
+    if sys.platform == "win32":
+        # certifi was already tried above (import certifi), so if we reach here
+        # it failed. Try pip-installed certifi via importlib.
+        try:
+            import importlib.util as _ilu
+            _spec = _ilu.find_spec("certifi")
+            if _spec and _spec.origin:
+                _certifi_dir = os.path.dirname(_spec.origin)
+                _cacert = os.path.join(_certifi_dir, "cacert.pem")
+                if os.path.isfile(_cacert):
+                    os.environ["SSL_CERT_FILE"] = _cacert
+                    return
+        except Exception:
+            pass
 
     # 3. Common distro / macOS locations
     for candidate in (
@@ -8885,11 +8901,9 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
                 return False
             # Wait up to 10 seconds for the old process to exit
             for _ in range(20):
-                try:
-                    os.kill(existing_pid, 0)
-                    _time.sleep(0.5)
-                except (ProcessLookupError, PermissionError):
+                if not pid_exists(existing_pid):
                     break  # Process is gone
+                _time.sleep(0.5)
             else:
                 # Still alive after 10s — force kill
                 logger.warning(

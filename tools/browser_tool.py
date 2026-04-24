@@ -85,6 +85,7 @@ from tools.tool_backend_helpers import normalize_browser_cloud_provider
 from tools.windows_compat import (
     is_windows,
     safe_kill,
+    pid_exists,
     join_path_list,
     get_sane_path_str,
     get_text_open_kwargs,
@@ -549,14 +550,9 @@ def _reap_orphaned_browser_sessions():
             continue
 
         # Check if the daemon is still alive
-        try:
-            os.kill(daemon_pid, 0)  # signal 0 = existence check
-        except ProcessLookupError:
+        if not pid_exists(daemon_pid):
             # Already dead, just clean up the dir
             shutil.rmtree(socket_dir, ignore_errors=True)
-            continue
-        except PermissionError:
-            # Alive but owned by someone else — leave it alone
             continue
 
         # Daemon is alive and not tracked — orphan. Kill it.

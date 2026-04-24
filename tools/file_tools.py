@@ -76,7 +76,7 @@ _BLOCKED_DEVICE_PATHS = frozenset({
 
 
 def _is_blocked_device(filepath: str) -> bool:
-    """Return True if the path would hang the process (infinite output or blocking input).
+    r"""Return True if the path would hang the process (infinite output or blocking input).
 
     Uses the *literal* path — no symlink resolution — because the model
     specifies paths directly and realpath follows symlinks all the way
@@ -84,7 +84,7 @@ def _is_blocked_device(filepath: str) -> bool:
     the check.
     
     On Windows, also blocks device names (CON, NUL, COM1, etc.) and
-    Win32 device namespace prefixes (\\.\ and \?\).
+    Win32 device namespace prefixes (\\.\ and \\?\).
     """
     normalized = os.path.expanduser(filepath)
     if normalized in _BLOCKED_DEVICE_PATHS:

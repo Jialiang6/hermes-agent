@@ -59,6 +59,8 @@ __all__ = [
     "secure_file",
     # User ID
     "get_uid", "get_euid",
+    # PID existence check
+    "pid_exists",
 ]
 
 # Platform detection
@@ -183,6 +185,42 @@ def _terminate_unix_process_tree(pid: int, force: bool = False) -> bool:
             return False
 
 
+def pid_exists(pid: int) -> bool:
+    """Check whether a process with the given PID exists.
+
+    On Windows, uses ``OpenProcess`` via ctypes (with a tasklist fallback).
+    On Unix, uses ``os.kill(pid, 0)`` which is fast and reliable.
+    """
+    if _IS_WINDOWS:
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(0x100000, 0, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+            return False
+        except (OSError, AttributeError):
+            # Fallback: try tasklist
+            try:
+                r = subprocess.run(
+                    ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                    capture_output=True, text=True, timeout=5,
+                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0,
+                )
+                return str(pid) in r.stdout
+            except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+                return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True  # exists but no permission to signal
+
+
 # ---------------------------------------------------------------------------
 # Windows Command Resolution
 # ---------------------------------------------------------------------------
@@ -276,8 +314,8 @@ def create_ipc_server(name: str):
     """
     Create an IPC server.
     
-    On Unix: Unix Domain Socket at /tmp/hermes_<name>.sock
-    On Windows: Named Pipe at \\.\pipe\hermes_<name>
+On Unix: Unix Domain Socket at /tmp/hermes_<name>.sock
+    On Windows: Named Pipe at ``\\\\.\\pipe\\hermes_<name>``
     
     Args:
         name: Unique name for the IPC endpoint

@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import List, Optional
 
-from tools.windows_compat import get_text_open_kwargs, read_text_utf8, write_text_utf8, safe_kill
+from tools.windows_compat import get_text_open_kwargs, read_text_utf8, write_text_utf8, safe_kill, pid_exists
 
 _PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
@@ -324,7 +324,8 @@ def _check_gateway_running(profile_dir: Path) -> bool:
             return False
         data = json.loads(raw) if raw.startswith("{") else {"pid": int(raw)}
         pid = int(data["pid"])
-        os.kill(pid, 0)  # existence check
+        if not pid_exists(pid):
+            return False
         return True
     except (json.JSONDecodeError, KeyError, ValueError, TypeError,
             ProcessLookupError, PermissionError, OSError):

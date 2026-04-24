@@ -262,7 +262,7 @@ class LocalEnvironment(BaseEnvironment):
         return None
 
     def get_temp_dir(self) -> str:
-        """Return a shell-safe writable temp dir for local execution.
+        r"""Return a shell-safe writable temp dir for local execution.
 
         Termux does not provide /tmp by default, but exposes a POSIX TMPDIR.
         Prefer POSIX-style env vars when available, keep using /tmp on regular
