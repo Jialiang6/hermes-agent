@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from tools.windows_compat import is_windows
 
 # Ensure project root is importable
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -111,7 +112,7 @@ def _ensure_current_event_loop(request):
 def _enforce_test_timeout():
     """Kill any individual test that takes longer than 30 seconds.
     SIGALRM is Unix-only; skip on Windows."""
-    if sys.platform == "win32":
+    if is_windows():
         yield
         return
     old = signal.signal(signal.SIGALRM, _timeout_handler)

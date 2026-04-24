@@ -555,9 +555,14 @@ class ProcessRegistry:
                     if delta:
                         self._check_watch_patterns(session, delta)
 
-                # Check if process is still running
+                # Check if process is still running (cross-platform: /proc on Unix, kill -0 fallback)
+                # Note: Most remote sandboxes run Linux, so /proc should work.
+                # For Windows remote environments, we rely on the output file check below.
                 check = env.execute(
-                    f"kill -0 \"$(cat {quoted_pid_path} 2>/dev/null)\" 2>/dev/null; echo $?",
+                    f"pid=$(cat {quoted_pid_path} 2>/dev/null); "
+                    f"if [ -n \"$pid\" ]; then "
+                    f"  (test -d /proc/$pid || kill -0 $pid 2>/dev/null) && echo 0 || echo 1; "
+                    f"else echo 1; fi",
                     timeout=5,
                 )
                 check_output = check.get("output", "").strip()

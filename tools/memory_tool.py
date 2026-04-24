@@ -23,16 +23,6 @@ Design:
 - Frozen snapshot pattern: system prompt is stable, tool responses show live state
 """
 
-# fcntl is Unix-only; on Windows use msvcrt for file locking
-try:
-    import fcntl
-except ImportError:
-    fcntl = None
-try:
-    import msvcrt
-except ImportError:
-    msvcrt = None
-
 import json
 import logging
 import os
@@ -42,6 +32,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from hermes_constants import get_hermes_home
 from typing import Dict, Any, List, Optional
+from tools.windows_compat import lock_file, unlock_file
 
 logger = logging.getLogger(__name__)
 
@@ -150,18 +141,10 @@ class MemoryStore:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         fd = open(lock_path, "w")
         try:
-            if fcntl:
-                fcntl.flock(fd, fcntl.LOCK_EX)
-            elif msvcrt:
-                # Windows: msvcrt.locking() requires file descriptor (int), not file object
-                msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)
+            lock_file(fd, exclusive=True)
             yield
         finally:
-            if fcntl:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            elif msvcrt:
-                # Windows: msvcrt.locking() requires file descriptor (int), not file object
-                msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
+            unlock_file(fd)
             fd.close()
 
     @staticmethod

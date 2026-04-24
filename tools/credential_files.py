@@ -255,8 +255,12 @@ def _safe_skills_path(skills_dir: Path) -> str:
         return str(skills_dir)
 
     for link in symlinks:
+        try:
+            target = os.readlink(link)
+        except (OSError, AttributeError):
+            target = "(could not resolve symlink target)"
         logger.warning("credential_files: skipping symlink in skills dir: %s -> %s",
-                       link, os.readlink(link))
+                       link, target)
 
     import atexit
     import shutil

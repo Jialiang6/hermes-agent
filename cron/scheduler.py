@@ -15,16 +15,6 @@ import logging
 import os
 import subprocess
 import sys
-
-# fcntl is Unix-only; on Windows use msvcrt for file locking
-try:
-    import fcntl
-except ImportError:
-    fcntl = None
-    try:
-        import msvcrt
-    except ImportError:
-        msvcrt = None
 from pathlib import Path
 from typing import Optional
 
@@ -36,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from hermes_constants import get_hermes_home
 from hermes_cli.config import load_config
 from hermes_time import now as _hermes_now
+from tools.windows_compat import lock_file, unlock_file
 
 logger = logging.getLogger(__name__)
 
@@ -632,7 +623,7 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
             import yaml
             _cfg_path = str(_hermes_home / "config.yaml")
             if os.path.exists(_cfg_path):
-                with open(_cfg_path) as _f:
+                with open(_cfg_path, encoding="utf-8") as _f:
                     _cfg = yaml.safe_load(_f) or {}
                 _model_cfg = _cfg.get("model", {})
                 if not job.get("model"):
@@ -913,14 +904,12 @@ def tick(verbose: bool = True, adapters=None, loop=None) -> int:
     """
     _LOCK_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Cross-platform file locking: fcntl on Unix, msvcrt on Windows
+    # Cross-platform file locking via windows_compat
     lock_fd = None
     try:
         lock_fd = open(_LOCK_FILE, "w")
-        if fcntl:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        elif msvcrt:
-            msvcrt.locking(lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+        if not lock_file(lock_fd, exclusive=True):
+            raise OSError("Lock acquisition failed")
     except (OSError, IOError):
         logger.debug("Tick skipped — another instance holds the lock")
         if lock_fd is not None:
@@ -978,13 +967,7 @@ def tick(verbose: bool = True, adapters=None, loop=None) -> int:
 
         return executed
     finally:
-        if fcntl:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        elif msvcrt:
-            try:
-                msvcrt.locking(lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
-            except (OSError, IOError):
-                pass
+        unlock_file(lock_fd)
         lock_fd.close()
 
 
