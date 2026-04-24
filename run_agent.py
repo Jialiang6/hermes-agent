@@ -7808,6 +7808,7 @@ class AIAgent:
         self._codex_incomplete_retries = 0
         self._thinking_prefill_retries = 0
         self._last_content_with_tools = None
+        self._last_content_with_tools_substantive = None
         self._mute_post_response = False
         self._unicode_sanitization_passes = 0
 
@@ -9995,24 +9996,46 @@ class AIAgent:
                     # as a fallback final response. Common pattern: model delivers its
                     # answer and calls memory/skill tools as a side-effect in the same
                     # turn. If the follow-up turn after tools is empty, we use this.
+                    #
+                    # HOWEVER: if any tool call is substantive (not housekeeping), the
+                    # content is NOT a complete answer — the model needs to process the
+                    # tool result and produce a final summary.  In that case we still
+                    # save the content as a *last resort* fallback, but mark it as
+                    # incomplete so the empty-response recovery logic (prefill, retry)
+                    # gets a chance to elicit the real summary before falling back to
+                    # this partial content.  This prevents delegate_task results from
+                    # being replaced by a brief "I'll create 3 parallel tasks..."
+                    # preamble when the model returns empty after processing the results.
                     turn_content = assistant_message.content or ""
+                    # Only mute subsequent output when EVERY tool call in
+                    # this turn is post-response housekeeping (memory, todo,
+                    # skill_manage, etc.).  If any substantive tool is present
+                    # (search_files, read_file, write_file, terminal, ...),
+                    # keep output visible so the user sees progress.
+                    _HOUSEKEEPING_TOOLS = frozenset({
+                        "memory", "todo", "skill_manage", "session_search",
+                    })
+                    _all_housekeeping = all(
+                        tc.function.name in _HOUSEKEEPING_TOOLS
+                        for tc in assistant_message.tool_calls
+                    )
                     if turn_content and self._has_content_after_think_block(turn_content):
-                        self._last_content_with_tools = turn_content
-                        # Only mute subsequent output when EVERY tool call in
-                        # this turn is post-response housekeeping (memory, todo,
-                        # skill_manage, etc.).  If any substantive tool is present
-                        # (search_files, read_file, write_file, terminal, ...),
-                        # keep output visible so the user sees progress.
-                        _HOUSEKEEPING_TOOLS = frozenset({
-                            "memory", "todo", "skill_manage", "session_search",
-                        })
-                        _all_housekeeping = all(
-                            tc.function.name in _HOUSEKEEPING_TOOLS
-                            for tc in assistant_message.tool_calls
-                        )
-                        if _all_housekeeping and self._has_stream_consumers():
-                            self._mute_post_response = True
-                        elif self.quiet_mode:
+                        if _all_housekeeping:
+                            # Housekeeping-only: content IS the final answer.
+                            # Use it as fallback without hesitation.
+                            self._last_content_with_tools = turn_content
+                            if self._has_stream_consumers():
+                                self._mute_post_response = True
+                        else:
+                            # Substantive tools present: content is a preamble, not
+                            # a final answer.  Save it as a *low-priority* fallback
+                            # so the empty-response recovery pipeline (prefill, retry)
+                            # gets priority over this partial content.  Without this,
+                            # delegate_task results get replaced by a brief intro text
+                            # instead of the expected summary report.
+                            self._last_content_with_tools_substantive = turn_content
+                            self._last_content_with_tools = None
+                        if not _all_housekeeping and self.quiet_mode:
                             clean = self._strip_think_blocks(turn_content).strip()
                             if clean:
                                 self._vprint(f"  ┊ 💬 {clean}")
@@ -10297,8 +10320,50 @@ class AIAgent:
                                 continue
 
                         # Exhausted retries and fallback chain (or no
-                        # fallback configured).  Fall through to the
-                        # "(empty)" terminal.
+                        # fallback configured).  Before falling through to
+                        # "(empty)", check if there's a substantive-tool
+                        # preamble from the previous turn.  This happens when
+                        # the model says "I'll run 3 tasks..." and calls
+                        # delegate_task, then returns empty after processing
+                        # results.  The preamble isn't the ideal final answer,
+                        # but it's far better than "(empty)".
+                        _substantive_fallback = getattr(
+                            self, '_last_content_with_tools_substantive', None
+                        )
+                        if _substantive_fallback:
+                            _turn_exit_reason = "fallback_substantive_preamble"
+                            logger.info(
+                                "All retries exhausted — using substantive-tool "
+                                "preamble as final response (%d chars)",
+                                len(_substantive_fallback),
+                            )
+                            self._emit_status(
+                                "↻ Empty response after substantive tool calls "
+                                "— using preamble content as final answer"
+                            )
+                            self._last_content_with_tools_substantive = None
+                            self._empty_content_retries = 0
+                            for i in range(len(messages) - 1, -1, -1):
+                                msg = messages[i]
+                                if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                                    tool_names = []
+                                    for tc in msg["tool_calls"]:
+                                        if not tc or not isinstance(tc, dict): continue
+                                        fn = tc.get("function", {})
+                                        tool_names.append(fn.get("name", "unknown"))
+                                    msg["content"] = (
+                                        f"Calling the "
+                                        f"{', '.join(tool_names)} tool"
+                                        f"{'s' if len(tool_names) > 1 else ''}..."
+                                    )
+                                    break
+                            final_response = self._strip_think_blocks(
+                                _substantive_fallback
+                            ).strip()
+                            self._response_was_previewed = True
+                            break
+
+                        # ── Truly empty — fall through to "(empty)" ──
                         _turn_exit_reason = "empty_response_exhausted"
                         reasoning_text = self._extract_reasoning(assistant_message)
                         assistant_msg = self._build_assistant_message(assistant_message, finish_reason)
