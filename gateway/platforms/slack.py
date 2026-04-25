@@ -1140,7 +1140,7 @@ class SlackAdapter(BasePlatformAdapter):
                     MAX_TEXT_INJECT_BYTES = 100 * 1024
                     if ext in (".md", ".txt") and len(raw_bytes) <= MAX_TEXT_INJECT_BYTES:
                         try:
-                            text_content = raw_bytes.decode("utf-8")
+                            text_content = raw_bytes.decode("utf-8", errors="replace")
                             display_name = original_filename or f"document{ext}"
                             display_name = re.sub(r'[^\w.\- ]', '_', display_name)
                             injection = f"[Content of {display_name}]:\n{text_content}"

@@ -333,7 +333,7 @@ class WebhookAdapter(BasePlatformAdapter):
                 import urllib.parse
 
                 payload = dict(
-                    urllib.parse.parse_qsl(raw_body.decode("utf-8"))
+                    urllib.parse.parse_qsl(raw_body.decode("utf-8", errors="replace"))
                 )
             except Exception:
                 return web.json_response(

@@ -46,6 +46,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -205,7 +206,7 @@ class YCBenchEvalConfig(HermesAgentEnvConfig):
         description="Weight of normalised final funds in composite score.",
     )
     db_dir: str = Field(
-        default="/tmp/yc_bench_dbs",
+        default_factory=lambda: str(Path(tempfile.gettempdir()) / "yc_bench_dbs"),
         description="Directory for per-run SQLite databases.",
     )
     horizon_years: Optional[int] = Field(
@@ -361,7 +362,7 @@ class YCBenchEvalEnv(HermesAgentBaseEnv):
             run_timeout=3600,
             survival_weight=0.5,
             funds_weight=0.5,
-            db_dir="/tmp/yc_bench_dbs",
+            db_dir=str(Path(tempfile.gettempdir()) / "yc_bench_dbs"),
             eval_handling=EvalHandlingEnum.STOP_TRAIN,
             group_size=1,
             steps_per_eval=1,
@@ -422,7 +423,7 @@ class YCBenchEvalEnv(HermesAgentBaseEnv):
         os.makedirs(log_dir, exist_ok=True)
         run_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self._streaming_path = os.path.join(log_dir, f"samples_{run_ts}.jsonl")
-        self._streaming_file = open(self._streaming_path, "w")
+        self._streaming_file = open(self._streaming_path, "w", encoding="utf-8")
         self._streaming_lock = threading.Lock()
 
         print(f"\nYC-Bench eval matrix: {len(self.all_eval_items)} runs")

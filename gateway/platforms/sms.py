@@ -289,7 +289,7 @@ class SmsAdapter(BasePlatformAdapter):
         try:
             raw = await request.read()
             # Twilio sends form-encoded data, not JSON
-            form = urllib.parse.parse_qs(raw.decode("utf-8"), keep_blank_values=True)
+            form = urllib.parse.parse_qs(raw.decode("utf-8", errors="replace"), keep_blank_values=True)
         except Exception as e:
             logger.error("[sms] webhook parse error: %s", e)
             return web.Response(

@@ -26,7 +26,6 @@ from typing import Any, Optional
 _GATEWAY_KIND = "hermes-gateway"
 _RUNTIME_STATUS_FILE = "gateway_state.json"
 _LOCKS_DIRNAME = "gateway-locks"
-_IS_WINDOWS = sys.platform == "win32"
 _UNSET = object()
 
 
@@ -78,7 +77,7 @@ def _get_process_start_time(pid: int) -> Optional[int]:
         try:
             r = subprocess.run(
                 ["wmic", "process", "where", f"ProcessId={pid}", "get", "CreationDate"],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
+                capture_output=True, text=True, encoding="oem", errors="replace", timeout=5,
             )
             # Parse wmic output - second line has the date
             lines = [l.strip() for l in r.stdout.strip().splitlines() if l.strip()]
@@ -104,7 +103,7 @@ def _read_process_cmdline(pid: int) -> Optional[str]:
         try:
             r = subprocess.run(
                 ["wmic", "process", "where", f"ProcessId={pid}", "get", "CommandLine"],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
+                capture_output=True, text=True, encoding="oem", errors="replace", timeout=5,
             )
             lines = [l.strip() for l in r.stdout.strip().splitlines() if l.strip()]
             if len(lines) >= 2:

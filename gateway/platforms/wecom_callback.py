@@ -297,7 +297,7 @@ class WecomCallbackAdapter(BasePlatformAdapter):
         root = ET.fromstring(body)
         encrypt = root.findtext("Encrypt", default="")
         crypt = self._crypt_for_app(app)
-        return crypt.decrypt(msg_signature, timestamp, nonce, encrypt).decode("utf-8")
+        return crypt.decrypt(msg_signature, timestamp, nonce, encrypt).decode("utf-8", errors="replace")
 
     def _build_event(self, app: Dict[str, Any], xml_text: str) -> Optional[MessageEvent]:
         root = ET.fromstring(xml_text)

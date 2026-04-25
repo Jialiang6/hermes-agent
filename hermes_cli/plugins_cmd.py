@@ -120,7 +120,7 @@ def _read_manifest(plugin_dir: Path) -> dict:
     try:
         import yaml
 
-        with open(manifest_file) as f:
+        with open(manifest_file, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except Exception as e:
         logger.warning("Failed to read plugin.yaml in %s: %s", plugin_dir, e)
@@ -571,7 +571,7 @@ def cmd_list() -> None:
 
         if manifest_file.exists() and yaml:
             try:
-                with open(manifest_file) as f:
+                with open(manifest_file, encoding="utf-8") as f:
                     manifest = yaml.safe_load(f) or {}
                 name = manifest.get("name", d.name)
                 version = manifest.get("version", "")
@@ -765,7 +765,7 @@ def cmd_toggle() -> None:
 
         if manifest_file.exists() and yaml:
             try:
-                with open(manifest_file) as f:
+                with open(manifest_file, encoding="utf-8") as f:
                     manifest = yaml.safe_load(f) or {}
                 name = manifest.get("name", d.name)
                 description = manifest.get("description", "")

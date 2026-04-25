@@ -49,9 +49,9 @@ import inspect as _inspect
 _caller_globals = _inspect.stack()[0][0].f_globals if len(_inspect.stack()) > 0 else globals()
 
 if _parseltongue_path.exists():
-    exec(compile(open(_parseltongue_path).read(), str(_parseltongue_path), 'exec'), _caller_globals)
+    exec(compile(open(_parseltongue_path, encoding="utf-8").read(), str(_parseltongue_path), 'exec'), _caller_globals)
 if _race_path.exists():
-    exec(compile(open(_race_path).read(), str(_race_path), 'exec'), _caller_globals)
+    exec(compile(open(_race_path, encoding="utf-8").read(), str(_race_path), 'exec'), _caller_globals)
 
 # ═══════════════════════════════════════════════════════════════════
 # Hermes config paths
@@ -324,7 +324,7 @@ def _get_current_model() -> tuple:
     if not CONFIG_PATH.exists():
         return None, None
     try:
-        with open(CONFIG_PATH) as f:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
         model_cfg = cfg.get("model", {})
         if isinstance(model_cfg, str):
@@ -385,7 +385,7 @@ def _write_config(system_prompt: str = None, prefill_file: str = None):
     cfg = {}
     if CONFIG_PATH.exists():
         try:
-            with open(CONFIG_PATH) as f:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
         except Exception:
             cfg = {}
@@ -399,7 +399,7 @@ def _write_config(system_prompt: str = None, prefill_file: str = None):
     if prefill_file is not None:
         cfg["agent"]["prefill_messages_file"] = prefill_file
 
-    with open(CONFIG_PATH, "w") as f:
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True,
                   width=120, sort_keys=False)
 
@@ -408,7 +408,7 @@ def _write_config(system_prompt: str = None, prefill_file: str = None):
 
 def _write_prefill(prefill_messages: list):
     """Write prefill messages to ~/.hermes/prefill.json."""
-    with open(PREFILL_PATH, "w") as f:
+    with open(PREFILL_PATH, "w", encoding="utf-8") as f:
         json.dump(prefill_messages, f, indent=2, ensure_ascii=False)
     return str(PREFILL_PATH)
 
@@ -716,12 +716,12 @@ def undo_jailbreak(verbose=True):
     """Remove jailbreak settings from config.yaml and delete prefill.json."""
     if CONFIG_PATH.exists():
         try:
-            with open(CONFIG_PATH) as f:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
             if "agent" in cfg:
                 cfg["agent"].pop("system_prompt", None)
                 cfg["agent"].pop("prefill_messages_file", None)
-            with open(CONFIG_PATH, "w") as f:
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
                 yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True,
                           width=120, sort_keys=False)
             if verbose:

@@ -299,7 +299,8 @@ class ProcessRegistry:
         ):
             if os.path.isdir(fallback) and os.access(fallback, os.W_OK):
                 return fallback
-        return "/tmp"
+        # Return the fallback temp directory (already cross-platform)
+        return fallback
 
     def spawn_local(
         self,

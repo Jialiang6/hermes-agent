@@ -53,11 +53,16 @@ try:
     _MCP_SERVER_AVAILABLE = True
 except ImportError:
     FastMCP = None  # type: ignore[assignment,misc]
-
+logger = logging.getLogger("hermes.mcp_serve")
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _fallback_hermes_home() -> Path:
+    """Fallback for get_hermes_home() when hermes_constants is unavailable."""
+    return Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+
 
 def _get_sessions_dir() -> Path:
     """Return the sessions directory using HERMES_HOME."""
@@ -65,7 +70,7 @@ def _get_sessions_dir() -> Path:
         from hermes_constants import get_hermes_home
         return get_hermes_home() / "sessions"
     except ImportError:
-        return Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "sessions"
+        return _fallback_hermes_home() / "sessions"
 
 
 def _get_session_db():
@@ -101,9 +106,7 @@ def _load_channel_directory() -> dict:
         from hermes_constants import get_hermes_home
         directory_file = get_hermes_home() / "channel_directory.json"
     except ImportError:
-        directory_file = Path(
-            os.environ.get("HERMES_HOME", Path.home() / ".hermes")
-        ) / "channel_directory.json"
+        directory_file = _fallback_hermes_home() / "channel_directory.json"
 
     if not directory_file.exists():
         return {}
@@ -346,7 +349,7 @@ class EventBridge:
             from hermes_constants import get_hermes_home
             db_file = get_hermes_home() / "state.db"
         except ImportError:
-            db_file = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "state.db"
+            db_file = _fallback_hermes_home() / "state.db"
 
         try:
             db_mtime = db_file.stat().st_mtime if db_file.exists() else 0.0

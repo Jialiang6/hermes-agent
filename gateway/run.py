@@ -750,6 +750,7 @@ class GatewayRunner:
                 model=model,
                 max_iterations=8,
                 quiet_mode=True,
+                suppress_status_output=True,
                 skip_memory=True,  # Flush agent — no memory provider
                 enabled_toolsets=["memory", "skills"],
                 session_id=old_session_id,
@@ -3481,6 +3482,7 @@ class GatewayRunner:
                                     model=_hyg_model,
                                     max_iterations=4,
                                     quiet_mode=True,
+                                    suppress_status_output=True,
                                     enabled_toolsets=["memory"],
                                     session_id=session_entry.session_id,
                                 )
@@ -5406,6 +5408,7 @@ class GatewayRunner:
                     **turn_route["runtime"],
                     max_iterations=max_iterations,
                     quiet_mode=True,
+                    suppress_status_output=True,
                     verbose_logging=False,
                     enabled_toolsets=enabled_toolsets,
                     reasoning_config=reasoning_config,
@@ -5587,6 +5590,7 @@ class GatewayRunner:
                     **turn_route["runtime"],
                     max_iterations=8,
                     quiet_mode=True,
+                    suppress_status_output=True,
                     verbose_logging=False,
                     enabled_toolsets=[],
                     reasoning_config=reasoning_config,
@@ -5936,6 +5940,7 @@ class GatewayRunner:
                 model=model,
                 max_iterations=4,
                 quiet_mode=True,
+                suppress_status_output=True,
                 enabled_toolsets=["memory"],
                 session_id=session_entry.session_id,
             )
@@ -7961,6 +7966,7 @@ class GatewayRunner:
                     **turn_route["runtime"],
                     max_iterations=max_iterations,
                     quiet_mode=True,
+                    suppress_status_output=True,  # Prevent _vprint to stdout in gateway mode
                     verbose_logging=False,
                     enabled_toolsets=enabled_toolsets,
                     ephemeral_system_prompt=combined_ephemeral or None,

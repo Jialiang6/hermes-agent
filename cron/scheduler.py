@@ -907,7 +907,7 @@ def tick(verbose: bool = True, adapters=None, loop=None) -> int:
     # Cross-platform file locking via windows_compat
     lock_fd = None
     try:
-        lock_fd = open(_LOCK_FILE, "w")
+        lock_fd = open(_LOCK_FILE, "w", encoding="utf-8")
         if not lock_file(lock_fd, exclusive=True):
             raise OSError("Lock acquisition failed")
     except (OSError, IOError):

@@ -586,6 +586,7 @@ class AIAgent:
         interim_assistant_callback: callable = None,
         tool_gen_callback: callable = None,
         status_callback: callable = None,
+        suppress_status_output: bool = False,  # Prevent _vprint to stdout (gateway mode)
         max_tokens: int = None,
         reasoning_config: Dict[str, Any] = None,
         service_tier: str = None,
@@ -735,7 +736,7 @@ class AIAgent:
         self.tool_progress_callback = tool_progress_callback
         self.tool_start_callback = tool_start_callback
         self.tool_complete_callback = tool_complete_callback
-        self.suppress_status_output = False
+        self.suppress_status_output = suppress_status_output  # Prevent _vprint to stdout
         self.thinking_callback = thinking_callback
         self.reasoning_callback = reasoning_callback
         self.clarify_callback = clarify_callback
@@ -1738,7 +1739,12 @@ class AIAgent:
         Emitting quiet-mode summary lines here duplicates progress and leaks tool
         previews into flows that are expected to stay silent, such as
         ``hermes chat -q``.
+
+        When ``suppress_status_output`` is True (gateway mode), all tool
+        progress messages are suppressed to prevent stdout pollution.
         """
+        if getattr(self, "suppress_status_output", False):
+            return False
         return self.quiet_mode and not self.tool_progress_callback
 
     def _emit_status(self, message: str) -> None:
@@ -2244,7 +2250,7 @@ class AIAgent:
 
                 if actions:
                     summary = " · ".join(dict.fromkeys(actions))
-                    self._safe_print(f"  💾 {summary}")
+                    self._vprint(f"  💾 {summary}")
                     _bg_cb = self.background_review_callback
                     if _bg_cb:
                         try:
@@ -7145,7 +7151,7 @@ class AIAgent:
             # Print cute message per tool
             if self._should_emit_quiet_tool_messages():
                 cute_msg = _get_cute_tool_message_impl(name, args, tool_duration, result=function_result)
-                self._safe_print(f"  {cute_msg}")
+                self._vprint(f"  {cute_msg}")
             elif not self.quiet_mode:
                 if self.verbose_logging:
                     print(f"  ✅ Tool {i+1} completed in {tool_duration:.2f}s")
