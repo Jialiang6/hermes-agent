@@ -361,8 +361,11 @@ class LocalEnvironment(BaseEnvironment):
         bash redirection commands (bash interprets ``C:`` as a variable
         assignment, not a drive letter — causing "No such file or directory").
         """
+        candidate = None
         for env_var in ("TMPDIR", "TMP", "TEMP"):
             candidate = self.env.get(env_var) or os.environ.get(env_var)
+            if candidate:
+                break
         # Accept both Unix (/path) and Windows (C:\path, \\server\share) paths
         if candidate and candidate.startswith("/"):
             return candidate.rstrip("/") or "/"
@@ -434,7 +437,12 @@ class LocalEnvironment(BaseEnvironment):
             stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
             preexec_fn=None if _IS_WINDOWS else os.setsid,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0) if _IS_WINDOWS else 0,
-            cwd=self.cwd,
+            # On Windows, self.cwd may contain a POSIX path (/c/Users/...) from
+            # Git Bash's pwd -P that CreateProcessW cannot resolve.  The
+            # wrapper's builtin cd / Set-Location / cd /d (in _wrap_command)
+            # handles directory changes inside the shell on all platforms,
+            # so Popen cwd is redundant here.
+            cwd=self.cwd if not _IS_WINDOWS else None,
         )
 
         if stdin_data is not None:

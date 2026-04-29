@@ -14,6 +14,7 @@ import queue
 import re
 import shlex
 import subprocess
+import sys
 import threading
 import time
 from collections import deque
@@ -44,7 +45,7 @@ def _resolve_args() -> list[str]:
     raw = os.getenv("HERMES_COPILOT_ACP_ARGS", "").strip()
     if not raw:
         return ["--acp", "--stdio"]
-    return shlex.split(raw)
+    return shlex.split(raw, posix=(sys.platform != "win32"))
 
 
 def _resolve_home_dir() -> str:

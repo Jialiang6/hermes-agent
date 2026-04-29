@@ -398,6 +398,8 @@ def _spawn(spec: ShellHookSpec, stdin_json: str) -> Dict[str, Any]:
             capture_output=True,
             timeout=spec.timeout,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             shell=False,
         )
     except subprocess.TimeoutExpired:
@@ -724,7 +726,7 @@ def _command_script_path(command: str) -> str:
     common bare-path form.
     """
     try:
-        parts = shlex.split(command)
+        parts = shlex.split(command, posix=(sys.platform != "win32"))
     except ValueError:
         return command
     if not parts:
@@ -811,7 +813,7 @@ def script_is_executable(command: str) -> bool:
     if not os.path.isfile(expanded):
         return False
     try:
-        argv = shlex.split(command)
+        argv = shlex.split(command, posix=(sys.platform != "win32"))
     except ValueError:
         return False
     is_bare_invocation = bool(argv) and argv[0] == path

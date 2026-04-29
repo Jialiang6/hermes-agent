@@ -4552,7 +4552,7 @@ class HermesCLI:
                 _cprint(line)
 
         try:
-            parts = shlex.split(cmd)
+            parts = shlex.split(cmd, posix=(sys.platform != "win32"))
         except ValueError:
             parts = cmd.split()
 
@@ -5804,7 +5804,7 @@ class HermesCLI:
                     i += 1
             return opts
 
-        tokens = shlex.split(cmd)
+        tokens = shlex.split(cmd, posix=(sys.platform != "win32"))
 
         if len(tokens) == 1:
             print()

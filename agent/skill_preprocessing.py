@@ -78,13 +78,16 @@ def run_inline_shell(command: str, cwd: Path | None, timeout: int) -> str:
             cwd=str(cwd) if cwd else None,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=max(1, int(timeout)),
             check=False,
         )
     except subprocess.TimeoutExpired:
         return f"[inline-shell timeout after {timeout}s: {command}]"
     except FileNotFoundError:
-        return "[inline-shell error: bash not found]"
+        shell_name = "cmd.exe" if sys.platform == "win32" else "bash"
+        return f"[inline-shell error: {shell_name} not found]"
     except Exception as exc:
         return f"[inline-shell error: {exc}]"
 

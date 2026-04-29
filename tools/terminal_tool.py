@@ -927,7 +927,11 @@ def _get_env_config() -> Dict[str, Any]:
     # normal sandbox behavior and discard host paths.
     cwd = os.getenv("TERMINAL_CWD", default_cwd)
     host_cwd = None
-    host_prefixes = ("/Users/", "/home/", "C:\\", "C:/")
+    host_prefixes = ("/Users/", "/home/") + tuple(
+        f"{d}:\\" for d in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    ) + tuple(
+        f"{d}:/" for d in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    )
     if env_type == "docker" and mount_docker_cwd:
         docker_cwd_source = os.getenv("TERMINAL_CWD") or os.getcwd()
         candidate = os.path.abspath(os.path.expanduser(docker_cwd_source))

@@ -1585,7 +1585,7 @@ class GatewayRunner:
         if not text:
             return "", False
         try:
-            tokens = shlex.split(text)
+            tokens = shlex.split(text, posix=(sys.platform != "win32"))
         except ValueError:
             tokens = text.split()
 

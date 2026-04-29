@@ -3422,7 +3422,7 @@ def get_external_process_provider_status(provider_id: str) -> Dict[str, Any]:
         or "copilot"
     )
     raw_args = os.getenv("HERMES_COPILOT_ACP_ARGS", "").strip()
-    args = shlex.split(raw_args) if raw_args else ["--acp", "--stdio"]
+    args = shlex.split(raw_args, posix=(sys.platform != "win32")) if raw_args else ["--acp", "--stdio"]
     base_url = os.getenv(pconfig.base_url_env_var, "").strip() if pconfig.base_url_env_var else ""
     if not base_url:
         base_url = pconfig.inference_base_url
@@ -3527,7 +3527,7 @@ def resolve_external_process_provider_credentials(provider_id: str) -> Dict[str,
         or "copilot"
     )
     raw_args = os.getenv("HERMES_COPILOT_ACP_ARGS", "").strip()
-    args = shlex.split(raw_args) if raw_args else ["--acp", "--stdio"]
+    args = shlex.split(raw_args, posix=(sys.platform != "win32")) if raw_args else ["--acp", "--stdio"]
     resolved_command = shutil.which(command) if command else None
     if not resolved_command and not base_url.startswith("acp+tcp://"):
         raise AuthError(

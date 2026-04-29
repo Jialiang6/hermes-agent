@@ -860,7 +860,7 @@ def get_windows_process_args(pid: int) -> Optional[List[str]]:
         )
         if result.returncode == 0 and result.stdout.strip():
             import shlex
-            return shlex.split(result.stdout.strip())
+            return shlex.split(result.stdout.strip(), posix=(sys.platform != "win32"))
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
     
@@ -880,7 +880,7 @@ def get_windows_process_args(pid: int) -> Optional[List[str]]:
                     cmd = line[len("commandline="):].strip()
                     if cmd:
                         import shlex
-                        return shlex.split(cmd)
+                        return shlex.split(cmd, posix=(sys.platform != "win32"))
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
     
