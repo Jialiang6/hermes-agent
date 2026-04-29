@@ -34,6 +34,19 @@ from hermes_constants import get_hermes_home
 from typing import Dict, Any, List, Optional
 from tools.windows_compat import lock_file, unlock_file
 
+from utils import atomic_replace
+
+# fcntl is Unix-only; on Windows use msvcrt for file locking
+msvcrt = None
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+    try:
+        import msvcrt
+    except ImportError:
+        pass
+
 logger = logging.getLogger(__name__)
 
 # Where memory files live — resolved dynamically so profile overrides
@@ -139,7 +152,15 @@ class MemoryStore:
         """
         lock_path = path.with_suffix(path.suffix + ".lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        fd = open(lock_path, "w")
+
+        if fcntl is None and msvcrt is None:
+            yield
+            return
+
+        if msvcrt and (not lock_path.exists() or lock_path.stat().st_size == 0):
+            lock_path.write_text(" ", encoding="utf-8")
+
+        fd = open(lock_path, "r+" if msvcrt else "a+")
         try:
             lock_file(fd, exclusive=True)
             yield
@@ -419,7 +440,7 @@ class MemoryStore:
                     f.write(content)
                     f.flush()
                     os.fsync(f.fileno())
-                os.replace(tmp_path, str(path))  # Atomic on same filesystem
+                atomic_replace(tmp_path, path)
             except BaseException:
                 # Clean up temp file on any failure
                 try:

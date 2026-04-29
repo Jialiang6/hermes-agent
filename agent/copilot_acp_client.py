@@ -21,6 +21,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from agent.file_safety import get_read_block_error, is_write_denied
+from agent.redact import redact_sensitive_text
 from tools.windows_compat import read_text_utf8, write_text_utf8
 
 ACP_MARKER_BASE_URL = "acp://copilot"
@@ -45,6 +47,47 @@ def _resolve_args() -> list[str]:
     return shlex.split(raw)
 
 
+def _resolve_home_dir() -> str:
+    """Return a stable HOME for child ACP processes."""
+
+    try:
+        from hermes_constants import get_subprocess_home
+
+        profile_home = get_subprocess_home()
+        if profile_home:
+            return profile_home
+    except Exception:
+        pass
+
+    home = os.environ.get("HOME", "").strip()
+    if home:
+        return home
+
+    expanded = os.path.expanduser("~")
+    if expanded and expanded != "~":
+        return expanded
+
+    try:
+        import pwd
+
+        resolved = pwd.getpwuid(os.getuid()).pw_dir.strip()
+        if resolved:
+            return resolved
+    except Exception:
+        pass
+
+    # Last resort: /tmp (writable on any POSIX system). Avoids crashing the
+    # subprocess with no HOME; callers can set HERMES_HOME explicitly if they
+    # need a different writable dir.
+    return "/tmp"
+
+
+def _build_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["HOME"] = _resolve_home_dir()
+    return env
+
+
 def _jsonrpc_error(message_id: Any, code: int, message: str) -> dict[str, Any]:
     return {
         "jsonrpc": "2.0",
@@ -52,6 +95,18 @@ def _jsonrpc_error(message_id: Any, code: int, message: str) -> dict[str, Any]:
         "error": {
             "code": code,
             "message": message,
+        },
+    }
+
+
+def _permission_denied(message_id: Any) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": message_id,
+        "result": {
+            "outcome": {
+                "outcome": "cancelled",
+            }
         },
     }
 
@@ -315,9 +370,25 @@ class CopilotACPClient:
             tools=tools,
             tool_choice=tool_choice,
         )
+        # Normalise timeout: run_agent.py may pass an httpx.Timeout object
+        # (used natively by the OpenAI SDK) rather than a plain float.
+        if timeout is None:
+            _effective_timeout = _DEFAULT_TIMEOUT_SECONDS
+        elif isinstance(timeout, (int, float)):
+            _effective_timeout = float(timeout)
+        else:
+            # httpx.Timeout or similar — pick the largest component so the
+            # subprocess has enough wall-clock time for the full response.
+            _candidates = [
+                getattr(timeout, attr, None)
+                for attr in ("read", "write", "connect", "pool", "timeout")
+            ]
+            _numeric = [float(v) for v in _candidates if isinstance(v, (int, float))]
+            _effective_timeout = max(_numeric) if _numeric else _DEFAULT_TIMEOUT_SECONDS
+
         response_text, reasoning_text = self._run_prompt(
             prompt_text,
-            timeout_seconds=float(timeout or _DEFAULT_TIMEOUT_SECONDS),
+            timeout_seconds=_effective_timeout,
         )
 
         tool_calls, cleaned_text = _extract_tool_calls_from_text(response_text)
@@ -353,6 +424,7 @@ class CopilotACPClient:
                 text=True, encoding="utf-8", errors="replace",
                 bufsize=1,
                 cwd=self._acp_cwd,
+                env=_build_subprocess_env(),
             )
         except FileNotFoundError as exc:
             raise RuntimeError(
@@ -372,6 +444,8 @@ class CopilotACPClient:
         stderr_tail: deque[str] = deque(maxlen=40)
 
         def _stdout_reader() -> None:
+            if proc.stdout is None:
+                return
             for line in proc.stdout:
                 try:
                     inbox.put(json.loads(line))
@@ -519,18 +593,13 @@ class CopilotACPClient:
         params = msg.get("params") or {}
 
         if method == "session/request_permission":
-            response = {
-                "jsonrpc": "2.0",
-                "id": message_id,
-                "result": {
-                    "outcome": {
-                        "outcome": "allow_once",
-                    }
-                },
-            }
+            response = _permission_denied(message_id)
         elif method == "fs/read_text_file":
             try:
                 path = _ensure_path_within_cwd(str(params.get("path") or ""), cwd)
+                block_error = get_read_block_error(str(path))
+                if block_error:
+                    raise PermissionError(block_error)
                 content = read_text_utf8(path) if path.exists() else ""
                 line = params.get("line")
                 limit = params.get("limit")
@@ -539,6 +608,8 @@ class CopilotACPClient:
                     start = line - 1
                     end = start + limit if isinstance(limit, int) and limit > 0 else None
                     content = "".join(lines[start:end])
+                if content:
+                    content = redact_sensitive_text(content)
                 response = {
                     "jsonrpc": "2.0",
                     "id": message_id,
@@ -551,6 +622,10 @@ class CopilotACPClient:
         elif method == "fs/write_text_file":
             try:
                 path = _ensure_path_within_cwd(str(params.get("path") or ""), cwd)
+                if is_write_denied(str(path)):
+                    raise PermissionError(
+                        f"Write denied: '{path}' is a protected system/credential file."
+                    )
                 path.parent.mkdir(parents=True, exist_ok=True)
                 write_text_utf8(path, str(params.get("content") or ""))
                 response = {
