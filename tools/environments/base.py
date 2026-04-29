@@ -464,12 +464,27 @@ class BaseEnvironment(ABC):
                 ps_cmd = command.replace("'", "''")
                 # Build the PowerShell wrapper.  We use ; to chain commands.
                 # -Command receives the full script string as one argument.
-                # Capture exit code immediately after the user command so
-                # that subsequent tracking cmdlets don't overwrite it.
+                #
+                # Exit-code strategy:
+                #   $LASTEXITCODE is only set by native (external) commands.
+                #   PowerShell cmdlets (Get-ChildItem, Select-String, …)
+                #   leave it unchanged.  Use the combo:
+                #     - If a native command returned non-zero, use its code.
+                #     - Else if the last statement failed ($? is false) because
+                #       of a PowerShell error, use 1.
+                #     - Otherwise (success), use 0.
+                #
+                # Encoding: force PowerShell's console output encoding to
+                # UTF-8 so the CWD marker emitted by Write-Output is
+                # correctly decoded by Python's UTF-8 TextIOWrapper pipe.
+                # Without this, the marker is emitted in the system code page
+                # (cp936/cp1252) while Python reads UTF-8 — garbling paths
+                # containing non-ASCII characters.
                 parts = [
+                    "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
                     f"Set-Location -Path '{ps_cwd}'",
                     f"{ps_cmd}",
-                    f"$__hermes_ec = $LASTEXITCODE",
+                    "$__hermes_ec = if ($LASTEXITCODE -ne 0) { $LASTEXITCODE } elseif (-not $?) { 1 } else { 0 }",
                     f"(Get-Location).Path | Set-Content -Path '{self._cwd_file}' -Encoding UTF8",
                     f"Write-Output ('{marker}' + (Get-Location).Path + '{marker}')",
                     f"exit $__hermes_ec",
@@ -612,17 +627,27 @@ class BaseEnvironment(ABC):
         #   have the fork-heritage problem — only explicitly inherited
         #   handles reach child processes, and Python's subprocess is
         #   careful about what it marks inheritable.
+        #
+        # Thread safety: a threading.Lock protects output_chunks so the
+        #   main thread can safely read partial output on interrupt/timeout
+        #   without racing with the drain thread's append() calls.
         # ------------------------------------------------------------------
+        _drain_lock = threading.Lock()
+
         if is_windows():
             def _drain():
                 try:
                     for line in proc.stdout:
-                        output_chunks.append(line)
+                        with _drain_lock:
+                            output_chunks.append(line)
                 except UnicodeDecodeError:
-                    output_chunks.clear()
-                    output_chunks.append(
-                        "[binary output detected — raw bytes not displayable]"
-                    )
+                    # With errors="replace" on the TextIOWrapper this
+                    # should never fire.  If it does, preserve the output
+                    # we already collected — don't clear the buffer.
+                    with _drain_lock:
+                        output_chunks.append(
+                            "\n[binary output detected — raw bytes not displayable]\n"
+                        )
                 except (ValueError, OSError):
                     pass
         else:
@@ -644,7 +669,8 @@ class BaseEnvironment(ABC):
                                 break
                             if not chunk:
                                 break  # true EOF — all writers closed
-                            output_chunks.append(decoder.decode(chunk))
+                            with _drain_lock:
+                                output_chunks.append(decoder.decode(chunk))
                             idle_after_exit = 0
                         elif proc.poll() is not None:
                             # bash is gone and the pipe was idle for ~100ms.
@@ -659,7 +685,8 @@ class BaseEnvironment(ABC):
                     try:
                         tail = decoder.decode(b"", final=True)
                         if tail:
-                            output_chunks.append(tail)
+                            with _drain_lock:
+                                output_chunks.append(tail)
                     except Exception:
                         pass
 

@@ -717,7 +717,7 @@ from tools.terminal_tool import set_sudo_password_callback, set_approval_callbac
 from tools.skills_tool import set_secret_capture_callback
 from hermes_cli.callbacks import prompt_for_secret
 from tools.browser_tool import _emergency_cleanup_all_sessions as _cleanup_all_browsers
-from tools.windows_compat import create_symlink_or_copy as _create_symlink_or_copy
+from tools.windows_compat import configure_stdout_utf8, create_symlink_or_copy as _create_symlink_or_copy
 
 # Guard to prevent cleanup from running multiple times on exit
 _cleanup_done = False
@@ -11172,6 +11172,8 @@ def main(
         python cli.py -w                         # Start in isolated git worktree
         python cli.py -w -q "Fix issue #123"     # Single query in worktree
     """
+    configure_stdout_utf8()
+
     global _active_worktree
 
     # Signal to terminal_tool that we're in interactive mode

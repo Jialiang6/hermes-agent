@@ -52,7 +52,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from tools.windows_compat import read_text_utf8, write_text_utf8
+from tools.windows_compat import configure_stdout_utf8, read_text_utf8, write_text_utf8
 
 
 def _add_accept_hooks_flag(parser) -> None:
@@ -7719,6 +7719,7 @@ def cmd_logs(args):
 
 def main():
     """Main entry point for hermes CLI."""
+    configure_stdout_utf8()
     parser = argparse.ArgumentParser(
         prog="hermes",
         description="Hermes Agent - AI assistant with tool-calling capabilities",
