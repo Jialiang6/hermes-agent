@@ -1237,7 +1237,10 @@ def _require_root_for_system_service(action: str) -> None:
 
 def _system_service_identity(run_as_user: str | None = None) -> tuple[str, str, str]:
     import getpass
-    import grp
+    try:
+        import grp
+    except ImportError:
+        grp = None
     try:
         import pwd
     except ImportError:

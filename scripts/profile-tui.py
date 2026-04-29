@@ -26,12 +26,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import pty
 import select
 import signal
 import sqlite3
 import sys
 import time
+
+try:
+    import pty
+except ImportError:
+    pty = None
 from pathlib import Path
 from typing import Any
 

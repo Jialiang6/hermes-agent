@@ -622,11 +622,12 @@ class BaseEnvironment(ABC):
         #
         # Windows: select() from the winsock library ONLY supports sockets,
         #   not pipe fds.  Calling select() on a pipe fd raises OSError
-        #   (WSAENOTSOCK).  A blocking ``for line in proc.stdout`` is fine
-        #   here because Windows process creation (CreateProcess) does NOT
-        #   have the fork-heritage problem — only explicitly inherited
-        #   handles reach child processes, and Python's subprocess is
-        #   careful about what it marks inheritable.
+        #   (WSAENOTSOCK).  A blocking ``for line in proc.stdout`` is
+        #   dangerous here — while Windows ``CreateProcess`` does not have
+        #   the fork-heritage problem, a child that calls ``subprocess.Popen``
+        #   without ``close_fds=True`` can pass the stdout pipe handle to a
+        #   grandchild, preventing EOF.  We use ``os.read(fd, 4096)`` in a
+        #   polling loop with an idle-after-exit timeout instead.
         #
         # Thread safety: a threading.Lock protects output_chunks so the
         #   main thread can safely read partial output on interrupt/timeout
@@ -636,20 +637,31 @@ class BaseEnvironment(ABC):
 
         if is_windows():
             def _drain():
+                fd = proc.stdout.fileno()
+                idle_after_exit = 0
                 try:
-                    for line in proc.stdout:
+                    while True:
+                        try:
+                            chunk = os.read(fd, 4096)
+                        except (ValueError, OSError):
+                            break  # fd already closed
+                        if not chunk:
+                            break  # true EOF — all writers closed
                         with _drain_lock:
-                            output_chunks.append(line)
+                            output_chunks.append(chunk.decode("utf-8", errors="replace"))
+                        idle_after_exit = 0
+                        if proc.poll() is not None:
+                            # Process exited — give two more cycles for
+                            # any buffered tail from grandchild writers.
+                            idle_after_exit += 1
+                            if idle_after_exit >= 3:
+                                break
+                            time.sleep(0.1)
                 except UnicodeDecodeError:
-                    # With errors="replace" on the TextIOWrapper this
-                    # should never fire.  If it does, preserve the output
-                    # we already collected — don't clear the buffer.
                     with _drain_lock:
                         output_chunks.append(
                             "\n[binary output detected — raw bytes not displayable]\n"
                         )
-                except (ValueError, OSError):
-                    pass
         else:
             decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 

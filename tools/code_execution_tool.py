@@ -239,10 +239,14 @@ def _connect():
         if sys.platform == "win32":
             # Windows: Named Pipe
             import win32file
+            import win32pipe
             import pywintypes
             pipe_name = os.environ["HERMES_RPC_SOCKET"]
-            for _ in range(10):
+            _sock = None
+            for _ in range(30):  # 30 attempts x 2s timeout = 60s total max wait
                 try:
+                    # Wait for a pipe instance to become available (2s timeout)
+                    win32pipe.WaitNamedPipe(pipe_name, 2000)
                     _sock = win32file.CreateFile(
                         pipe_name,
                         win32file.GENERIC_READ | win32file.GENERIC_WRITE,
@@ -251,10 +255,16 @@ def _connect():
                         0, None
                     )
                     break
-                except pywintypes.error:
-                    time.sleep(0.1)
+                except pywintypes.error as e:
+                    if e.winerror == 2:  # ERROR_FILE_NOT_FOUND — pipe doesn't exist yet
+                        time.sleep(0.5)
+                        continue
+                    elif e.winerror == 231:  # ERROR_PIPE_BUSY — all instances busy
+                        time.sleep(0.5)
+                        continue
+                    raise
             if _sock is None or _sock == -1:
-                raise RuntimeError(f"Could not connect to named pipe: {pipe_name}")
+                raise RuntimeError(f"Could not connect to named pipe after 60s: {pipe_name}")
         else:
             # Unix: Unix Domain Socket
             import socket

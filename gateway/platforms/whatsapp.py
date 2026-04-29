@@ -68,7 +68,7 @@ def _kill_port_process(port: int) -> None:
 
 def _terminate_bridge_process(proc, *, force: bool = False) -> None:
     """Terminate the bridge process using process-tree semantics where possible."""
-    if _IS_WINDOWS:
+    if is_windows():
         cmd = ["taskkill", "/PID", str(proc.pid), "/T"]
         if force:
             cmd.append("/F")

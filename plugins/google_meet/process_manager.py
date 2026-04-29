@@ -305,7 +305,7 @@ def stop(*, reason: str = "requested") -> Dict[str, Any]:
     if pid and _pid_alive(pid):
         try:
             os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError, OSError):
             pass
         for _ in range(20):
             if not _pid_alive(pid):
@@ -313,8 +313,8 @@ def stop(*, reason: str = "requested") -> Dict[str, Any]:
             time.sleep(0.5)
         if _pid_alive(pid):
             try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
+                os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+            except (ProcessLookupError, PermissionError, OSError):
                 pass
 
     _clear_active()

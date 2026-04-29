@@ -499,7 +499,10 @@ def save_credentials(creds: GoogleCredentials) -> Path:
                 fh.write(payload)
                 fh.flush()
                 os.fsync(fh.fileno())
-            os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
+            try:
+                os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
+            except (OSError, NotImplementedError):
+                pass
             atomic_replace(tmp_path, path)
         finally:
             try:
