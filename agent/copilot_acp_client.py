@@ -426,6 +426,7 @@ class CopilotACPClient:
                 bufsize=1,
                 cwd=self._acp_cwd,
                 env=_build_subprocess_env(),
+                close_fds=True,
             )
         except FileNotFoundError as exc:
             raise RuntimeError(

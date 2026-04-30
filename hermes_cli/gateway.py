@@ -834,7 +834,7 @@ class UserSystemdUnavailableError(RuntimeError):
 
 def _user_dbus_socket_path() -> Path:
     """Return the expected per-user D-Bus socket path (regardless of existence)."""
-    xdg = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    xdg = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{get_uid()}"
     return Path(xdg) / "bus"
 
 
@@ -913,7 +913,7 @@ def _preflight_user_systemd(*, auto_enable_linger: bool = True) -> None:
             username,
             reason="User D-Bus socket is missing even though linger is enabled.",
             fix_hint=(
-                f"  systemctl start user@{os.getuid()}.service\n"
+                f"  systemctl start user@{get_uid()}.service\n"
                 "  (may require sudo; try again after the command succeeds)"
             ),
         )
@@ -1183,7 +1183,7 @@ def remove_legacy_hermes_units(
 
     # System-scope removal (needs root)
     if system_units:
-        if os.geteuid() != 0:
+        if get_euid() != 0:
             print()
             print_warning("System-scope legacy units require root to remove.")
             print_info("  Re-run with: sudo hermes gateway migrate-legacy")

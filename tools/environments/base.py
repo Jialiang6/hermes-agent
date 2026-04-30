@@ -129,6 +129,7 @@ def _popen_bash(
         stderr=subprocess.STDOUT,
         stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
         text=True, encoding="utf-8", errors="replace",
+        close_fds=True,
         **kwargs,
     )
     if stdin_data is not None:
@@ -638,11 +639,26 @@ class BaseEnvironment(ABC):
         if is_windows():
             def _drain():
                 fd = proc.stdout.fileno()
+                # Non-blocking mode is required on Windows: a blocked os.read()
+                # cannot be interrupted, and grandchild processes that inherit
+                # the write end of this pipe will prevent EOF.  Without this,
+                # the idle_after_exit timeout below is unreachable because the
+                # call never returns.
+                os.set_blocking(fd, False)
                 idle_after_exit = 0
                 try:
                     while True:
                         try:
                             chunk = os.read(fd, 4096)
+                        except BlockingIOError:
+                            # No data available — check if process exited and
+                            # apply the idle timeout so we don't spin forever.
+                            if proc.poll() is not None:
+                                idle_after_exit += 1
+                                if idle_after_exit >= 3:
+                                    break
+                            time.sleep(0.1)
+                            continue
                         except (ValueError, OSError):
                             break  # fd already closed
                         if not chunk:

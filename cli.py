@@ -69,7 +69,6 @@ from agent.usage_pricing import (
     format_duration_compact,
     format_token_count_compact,
 )
-from agent.account_usage import fetch_account_usage, render_account_usage_lines
 from hermes_cli.banner import _format_context_length, format_banner_version_label
 
 _COMMAND_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
@@ -79,7 +78,6 @@ _COMMAND_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧
 # User-managed env files should override stale shell exports on restart.
 from hermes_constants import get_hermes_home, display_hermes_home
 from hermes_cli.env_loader import load_hermes_dotenv
-from utils import base_url_host_matches
 
 _hermes_home = get_hermes_home()
 _project_env = Path(__file__).parent / '.env'
@@ -717,7 +715,7 @@ from tools.terminal_tool import set_sudo_password_callback, set_approval_callbac
 from tools.skills_tool import set_secret_capture_callback
 from hermes_cli.callbacks import prompt_for_secret
 from tools.browser_tool import _emergency_cleanup_all_sessions as _cleanup_all_browsers
-from tools.windows_compat import configure_stdout_utf8, create_symlink_or_copy as _create_symlink_or_copy
+from tools.windows_compat import configure_stdout_utf8, create_symlink_or_copy as _create_symlink_or_copy, secure_file
 
 # Guard to prevent cleanup from running multiple times on exit
 _cleanup_done = False
@@ -1869,7 +1867,7 @@ def save_config_value(key_path: str, value: any) -> bool:
         
         # Enforce owner-only permissions on config files (contain API keys)
         try:
-            os.chmod(config_path, 0o600)
+            secure_file(config_path, 0o600)
         except (OSError, NotImplementedError):
             pass
         
@@ -2030,6 +2028,8 @@ class HermesCLI:
             or CLI_CONFIG["model"].get("base_url", "")
             or os.getenv("OPENROUTER_BASE_URL", "")
         ) or None
+        from utils import base_url_host_matches
+
         # Match key to resolved base_url: OpenRouter URL → prefer OPENROUTER_API_KEY,
         # custom endpoint → prefer OPENAI_API_KEY (issue #560).
         # Note: _ensure_runtime_credentials() re-resolves this before first use.
@@ -5277,6 +5277,8 @@ class HermesCLI:
         return scroll_offset, visible
 
     def _apply_model_switch_result(self, result, persist_global: bool) -> None:
+        from utils import base_url_host_matches
+
         if not result.success:
             _cprint(f"  ✗ {result.error_message}")
             return
@@ -5429,6 +5431,7 @@ class HermesCLI:
           /model <name> --provider <provider> — switch provider + model
           /model --provider <provider>        — switch to provider, auto-detect model
         """
+        from utils import base_url_host_matches
         from hermes_cli.model_switch import switch_model, parse_model_flags, list_authenticated_providers
         from hermes_cli.providers import get_label
 
@@ -7226,6 +7229,8 @@ class HermesCLI:
         provider = getattr(agent, "provider", None) or getattr(self, "provider", None)
         base_url = getattr(agent, "base_url", None) or getattr(self, "base_url", None)
         api_key = getattr(agent, "api_key", None) or getattr(self, "api_key", None)
+        from agent.account_usage import fetch_account_usage, render_account_usage_lines
+
         account_snapshot = None
         if provider:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:

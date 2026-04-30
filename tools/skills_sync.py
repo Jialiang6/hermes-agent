@@ -268,7 +268,7 @@ def sync_skills(quiet: bool = False) -> dict:
                     backup = dest.with_suffix(".bak")
                     shutil.move(str(dest), str(backup))
                     try:
-                        shutil.copytree(skill_src, dest)
+                        shutil.copytree(skill_src, dest, dirs_exist_ok=True)
                         manifest[skill_name] = bundled_hash
                         updated.append(skill_name)
                         if not quiet:

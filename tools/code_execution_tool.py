@@ -262,6 +262,13 @@ def _connect():
                     elif e.winerror == 231:  # ERROR_PIPE_BUSY — all instances busy
                         time.sleep(0.5)
                         continue
+                    elif e.winerror == 121:  # ERROR_SEM_TIMEOUT — WaitNamedPipe timed out
+                        # The pipe existed when we called WaitNamedPipe but was
+                        # destroyed (CloseHandle) before ConnectNamedPipe was
+                        # called — happens when the parent's accept() times out
+                        # and recreates the pipe.  Retry with the new instance.
+                        time.sleep(0.5)
+                        continue
                     raise
             if _sock is None or _sock == -1:
                 raise RuntimeError(f"Could not connect to named pipe after 60s: {pipe_name}")
@@ -548,6 +555,11 @@ def _rpc_server_loop(
         logger.debug("RPC listener socket timeout")
     except OSError as e:
         logger.debug("RPC listener socket error: %s", e, exc_info=True)
+    except Exception:
+        # Catch pywintypes.error (e.g. ERROR_PIPE_CONNECTED 535 leak from
+        # WindowsNamedPipeServer.accept) and any other unexpected exception
+        # so the daemon thread exits cleanly without crashing silently.
+        logger.debug("RPC listener unexpected error", exc_info=True)
     finally:
         if conn:
             try:
@@ -1269,9 +1281,17 @@ def execute_code(
         def _drain(pipe, chunks, max_bytes):
             """Simple head-only drain (used for stderr)."""
             total = 0
+            if _IS_WINDOWS:
+                os.set_blocking(pipe.fileno(), False)
             try:
                 while True:
-                    data = pipe.read(4096)
+                    try:
+                        data = pipe.read(4096)
+                    except BlockingIOError:
+                        if proc.poll() is not None:
+                            break
+                        time.sleep(0.05)
+                        continue
                     if not data:
                         break
                     if total < max_bytes:
@@ -1289,9 +1309,17 @@ def execute_code(
             from collections import deque
             tail_buf = deque()
             tail_collected = 0
+            if _IS_WINDOWS:
+                os.set_blocking(pipe.fileno(), False)
             try:
                 while True:
-                    data = pipe.read(4096)
+                    try:
+                        data = pipe.read(4096)
+                    except BlockingIOError:
+                        if proc.poll() is not None:
+                            break
+                        time.sleep(0.05)
+                        continue
                     if not data:
                         break
                     total_ref[0] += len(data)
@@ -1472,7 +1500,7 @@ def _kill_process_group(proc, escalate: bool = False):
     """Kill the child and its entire process group."""
     try:
         if _IS_WINDOWS:
-            terminate_process_tree(proc.pid)  # Kill entire process tree
+            terminate_process_tree(proc.pid, force=True)
         else:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
     except (ProcessLookupError, PermissionError) as e:
@@ -1483,13 +1511,13 @@ def _kill_process_group(proc, escalate: bool = False):
             logger.debug("Could not kill process: %s", e2, exc_info=True)
 
     if escalate:
-        # Give the process 5s to exit after SIGTERM, then SIGKILL
+        # Give the process 5s to exit after kill, then force-kill again
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             try:
                 if _IS_WINDOWS:
-                    terminate_process_tree(proc.pid, force=True)  # Force kill entire tree
+                    terminate_process_tree(proc.pid, force=True)
                 else:
                     os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             except (ProcessLookupError, PermissionError) as e:
@@ -1559,6 +1587,7 @@ def _is_usable_python(python_path: str) -> bool:
              "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)"],
             timeout=5,
             capture_output=True,
+            creationflags=subprocess.CREATE_NO_WINDOW if is_windows() else 0,
         )
         return result.returncode == 0
     except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):

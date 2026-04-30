@@ -435,6 +435,7 @@ class LocalEnvironment(BaseEnvironment):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
+            close_fds=True,
             preexec_fn=None if _IS_WINDOWS else os.setsid,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0) if _IS_WINDOWS else 0,
             # On Windows, self.cwd may contain a POSIX path (/c/Users/...) from
@@ -454,7 +455,7 @@ class LocalEnvironment(BaseEnvironment):
         """Kill the entire process group (all children)."""
         try:
             if _IS_WINDOWS:
-                terminate_process_tree(proc.pid)
+                terminate_process_tree(proc.pid, force=True)
             else:
                 pgid = os.getpgid(proc.pid)
                 os.killpg(pgid, signal.SIGTERM)

@@ -461,8 +461,15 @@ class WindowsNamedPipeServer:
                 self._win32pipe.ConnectNamedPipe(self._handle, None)
                 done_event.set()
             except Exception as e:
-                accept_error[0] = e
-                done_event.set()
+                # ERROR_PIPE_CONNECTED (535) means the client already connected
+                # via CreateFile before we called ConnectNamedPipe. The pipe IS
+                # connected — treat this as success, not failure.
+                winerr = getattr(e, 'winerror', None)
+                if winerr == 535:
+                    done_event.set()
+                else:
+                    accept_error[0] = e
+                    done_event.set()
 
         thread = threading.Thread(target=_do_connect, daemon=True)
         thread.start()
@@ -1197,7 +1204,7 @@ def create_symlink_or_copy(
         return True
     except OSError:
         if target_is_directory or os.path.isdir(src):
-            shutil.copytree(src, dst)
+            shutil.copytree(src, dst, dirs_exist_ok=True)
         else:
             shutil.copy2(src, dst)
         return False

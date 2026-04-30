@@ -2146,7 +2146,7 @@ class GatewayRunner:
 
         path = _hermes_home / self._STUCK_LOOP_FILE
         try:
-            counts = json.loads(path.read_text()) if path.exists() else {}
+            counts = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         except Exception:
             counts = {}
 
@@ -2158,7 +2158,7 @@ class GatewayRunner:
         # (they might become active again next restart)
 
         try:
-            path.write_text(json.dumps(new_counts))
+            path.write_text(json.dumps(new_counts), encoding="utf-8")
         except Exception:
             pass
 
@@ -2176,7 +2176,7 @@ class GatewayRunner:
             return 0
 
         try:
-            counts = json.loads(path.read_text())
+            counts = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return 0
 
@@ -2222,11 +2222,11 @@ class GatewayRunner:
         if not path.exists():
             return
         try:
-            counts = json.loads(path.read_text())
+            counts = json.loads(path.read_text(encoding="utf-8"))
             if session_key in counts:
                 del counts[session_key]
                 if counts:
-                    path.write_text(json.dumps(counts))
+                    path.write_text(json.dumps(counts), encoding="utf-8")
                 else:
                     path.unlink(missing_ok=True)
         except Exception:
@@ -3714,7 +3714,7 @@ class GatewayRunner:
                 response_path = _hermes_home / ".update_response"
                 try:
                     tmp = response_path.with_suffix(".tmp")
-                    tmp.write_text("")
+                    tmp.write_text("", encoding="utf-8")
                     tmp.replace(response_path)
                     logger.info(
                         "Recognized /%s during pending update prompt for %s; "
@@ -5933,7 +5933,7 @@ class GatewayRunner:
             if event.platform_update_id is not None:
                 dedup_data["update_id"] = event.platform_update_id
             (_hermes_home / ".restart_last_processed.json").write_text(
-                json.dumps(dedup_data)
+                json.dumps(dedup_data), encoding="utf-8"
             )
         except Exception as e:
             logger.debug("Failed to write restart dedup marker: %s", e)
@@ -5984,7 +5984,7 @@ class GatewayRunner:
             marker_path = _hermes_home / ".restart_last_processed.json"
             if not marker_path.exists():
                 return False
-            data = json.loads(marker_path.read_text())
+            data = json.loads(marker_path.read_text(encoding="utf-8"))
         except Exception:
             return False
 

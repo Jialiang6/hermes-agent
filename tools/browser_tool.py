@@ -822,7 +822,7 @@ def _write_owner_pid(socket_dir: str, session_name: str) -> None:
     """
     try:
         path = os.path.join(socket_dir, f"{session_name}.owner_pid")
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(str(os.getpid()))
     except OSError as exc:
         logger.debug("Could not write owner_pid file for %s: %s",
@@ -886,7 +886,7 @@ def _reap_orphaned_browser_sessions():
         owner_alive: Optional[bool] = None  # None = owner_pid missing/unreadable
         if os.path.isfile(owner_pid_file):
             try:
-                owner_pid = int(Path(owner_pid_file).read_text().strip())
+                owner_pid = int(Path(owner_pid_file).read_text(encoding="utf-8").strip())
                 try:
                     os.kill(owner_pid, 0)
                     owner_alive = True
@@ -1508,6 +1508,7 @@ def _run_browser_command(
                 stderr=stderr_fd,
                 stdin=subprocess.DEVNULL,
                 env=browser_env,
+                creationflags=subprocess.CREATE_NO_WINDOW if is_windows() else 0,
             )
         finally:
             os.close(stdout_fd)

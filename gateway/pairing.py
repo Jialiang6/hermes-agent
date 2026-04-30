@@ -61,10 +61,11 @@ def _secure_write(path: Path, data: str) -> None:
             f.flush()
             os.fsync(f.fileno())
         atomic_replace(tmp_path, path)
+        from tools.windows_compat import secure_file
         try:
-            os.chmod(path, 0o600)
+            secure_file(path, 0o600)
         except OSError:
-            pass  # Windows doesn't support chmod the same way
+            pass  # Best-effort; secure_file handles Windows internally
     except BaseException:
         try:
             os.unlink(tmp_path)

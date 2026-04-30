@@ -440,7 +440,7 @@ def create_profile(
 
     if clone_all and source_dir:
         # Full copy of source profile
-        shutil.copytree(source_dir, profile_dir)
+        shutil.copytree(source_dir, profile_dir, dirs_exist_ok=True)
         # Strip runtime files
         for stale in _CLONE_ALL_STRIP:
             (profile_dir / stale).unlink(missing_ok=True)

@@ -43,7 +43,7 @@ import yaml
 
 from hermes_cli.config import get_hermes_home, get_config_path, read_raw_config
 from hermes_constants import OPENROUTER_BASE_URL
-from tools.windows_compat import read_text_utf8, write_text_utf8, get_text_open_kwargs
+from tools.windows_compat import read_text_utf8, write_text_utf8, get_text_open_kwargs, secure_file
 from utils import atomic_replace
 
 logger = logging.getLogger(__name__)
@@ -784,7 +784,7 @@ def _load_auth_store(auth_file: Optional[Path] = None) -> Dict[str, Any]:
         return {"version": AUTH_STORE_VERSION, "providers": {}}
 
     try:
-        raw = json.loads(auth_file.read_text())
+        raw = json.loads(auth_file.read_text(encoding="utf-8"))
     except Exception as exc:
         corrupt_path = auth_file.with_suffix(".json.corrupt")
         try:
@@ -1327,9 +1327,9 @@ def _save_qwen_cli_tokens(tokens: Dict[str, Any]) -> Path:
     tmp_path = auth_path.with_suffix(".tmp")
     tmp_path.write_text(json.dumps(tokens, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     try:
-        os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
+        secure_file(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
     except (OSError, NotImplementedError):
-        pass  # Windows doesn't support Unix permission bits
+        pass  # Best-effort; secure_file handles Windows internally
     tmp_path.replace(auth_path)
     return auth_path
 

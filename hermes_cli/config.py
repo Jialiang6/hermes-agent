@@ -15,7 +15,7 @@ This module provides:
 import copy
 import logging
 import os
-from tools.windows_compat import is_windows, get_text_open_kwargs
+from tools.windows_compat import is_windows, secure_file, get_text_open_kwargs
 import re
 import stat
 import subprocess
@@ -262,7 +262,7 @@ def _secure_dir(path):
     except ValueError:
         mode = 0o700
     try:
-        os.chmod(path, mode)
+        secure_file(path, mode)
     except (OSError, NotImplementedError):
         pass
 
@@ -305,7 +305,7 @@ def _secure_file(path):
         return
     try:
         if os.path.exists(str(path)):
-            os.chmod(path, 0o600)
+            secure_file(path, 0o600)
     except (OSError, NotImplementedError):
         pass
 
@@ -3057,7 +3057,7 @@ def migrate_config(interactive: bool = True, quiet: bool = False) -> Dict[str, A
                         if not manifest_file.exists():
                             continue
                         try:
-                            with open(manifest_file) as _mf:
+                            with open(manifest_file, encoding="utf-8") as _mf:
                                 manifest = yaml.safe_load(_mf) or {}
                         except Exception:
                             manifest = {}
@@ -3793,7 +3793,7 @@ def save_env_value(key: str, value: str):
             os.fsync(f.fileno())
         atomic_replace(tmp_path, env_path)
         # Restore original permissions before _secure_file may tighten them.
-        if original_mode is not None:
+        if original_mode is not None and not is_windows():
             try:
                 os.chmod(env_path, original_mode)
             except OSError:
@@ -3854,7 +3854,7 @@ def remove_env_value(key: str) -> bool:
                 f.flush()
                 os.fsync(f.fileno())
             atomic_replace(tmp_path, env_path)
-            if original_mode is not None:
+            if original_mode is not None and not is_windows():
                 try:
                     os.chmod(env_path, original_mode)
                 except OSError:

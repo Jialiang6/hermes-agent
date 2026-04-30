@@ -312,7 +312,7 @@ def _has_any_provider_configured() -> bool:
     if auth_file.exists():
         try:
             import json
-            auth = json.loads(auth_file.read_text())
+            auth = json.loads(auth_file.read_text(encoding="utf-8"))
             active = auth.get("active_provider")
             if active:
                 status = get_auth_status(active)
@@ -6289,7 +6289,7 @@ def _ensure_fhs_path_guard() -> None:
         if not cfg.is_file():
             continue
         try:
-            existing = cfg.read_text(errors="replace")
+            existing = cfg.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         # Idempotency: skip if any uncommented PATH= line already references

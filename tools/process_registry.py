@@ -570,6 +570,7 @@ class ProcessRegistry:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
+            close_fds=True,
             preexec_fn=None if _IS_WINDOWS else os.setsid,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0) if _IS_WINDOWS else 0,
         )
@@ -679,9 +680,19 @@ class ProcessRegistry:
     def _reader_loop(self, session: ProcessSession):
         """Background thread: read stdout from a local Popen process."""
         first_chunk = True
+        fd = session.process.stdout.fileno()
+        if _IS_WINDOWS:
+            os.set_blocking(fd, False)
         try:
             while True:
-                chunk = session.process.stdout.read(4096)
+                try:
+                    chunk = session.process.stdout.read(4096)
+                except BlockingIOError:
+                    # No data available — check if process exited
+                    if session.process.poll() is not None:
+                        break
+                    time.sleep(0.05)
+                    continue
                 if not chunk:
                     break
                 if first_chunk:

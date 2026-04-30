@@ -1,7 +1,17 @@
 """Tests for gateway service management helpers."""
 
 import os
-import pwd
+
+try:
+    import pwd
+except ImportError:
+    pwd = None
+
+try:
+    import grp
+except ImportError:
+    grp = None
+
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -972,14 +982,12 @@ class TestGeneratedUnitIncludesLocalBin:
         assert "/.local/bin" in unit
 
 
+@pytest.mark.skipif(pwd is None, reason="pwd/grp not available on Windows")
 class TestSystemServiceIdentityRootHandling:
     """Root user handling in _system_service_identity()."""
 
     def test_auto_detected_root_is_rejected(self, monkeypatch):
         """When root is auto-detected (not explicitly requested), raise."""
-        import pwd
-        import grp
-
         monkeypatch.delenv("SUDO_USER", raising=False)
         monkeypatch.setenv("USER", "root")
         monkeypatch.setenv("LOGNAME", "root")
@@ -990,9 +998,6 @@ class TestSystemServiceIdentityRootHandling:
 
     def test_explicit_root_is_allowed(self, monkeypatch):
         """When root is explicitly passed via --run-as-user root, allow it."""
-        import pwd
-        import grp
-
         root_info = pwd.getpwnam("root")
         root_group = grp.getgrgid(root_info.pw_gid).gr_name
 
@@ -1002,9 +1007,6 @@ class TestSystemServiceIdentityRootHandling:
 
     def test_non_root_user_passes_through(self, monkeypatch):
         """Normal non-root user works as before."""
-        import pwd
-        import grp
-
         monkeypatch.delenv("SUDO_USER", raising=False)
         monkeypatch.setenv("USER", "nobody")
         monkeypatch.setenv("LOGNAME", "nobody")
@@ -1271,6 +1273,7 @@ class TestProfileArg:
         assert "<string>--profile</string>" in plist
         assert "<string>mybot</string>" in plist
 
+    @pytest.mark.skipif(pwd is None, reason="pwd not available on Windows")
     def test_launchd_plist_path_uses_real_user_home_not_profile_home(self, tmp_path, monkeypatch):
         profile_dir = tmp_path / ".hermes" / "profiles" / "orcha"
         profile_dir.mkdir(parents=True)

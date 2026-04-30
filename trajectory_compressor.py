@@ -1406,7 +1406,7 @@ def main(
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_input_dir = Path(temp_dir) / "input"
             temp_output_dir = Path(temp_dir) / "output"
-            temp_input_dir.mkdir()
+            temp_input_dir.mkdir(parents=True, exist_ok=True)
             
             # Write entries to temp file
             temp_input_file = temp_input_dir / "trajectories.jsonl"
@@ -1452,7 +1452,7 @@ def main(
             # Create a temp directory with sampled files
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_input_dir = Path(temp_dir) / "input"
-                temp_input_dir.mkdir()
+                temp_input_dir.mkdir(parents=True, exist_ok=True)
                 
                 random.seed(seed)
                 total_original = 0
