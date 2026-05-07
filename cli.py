@@ -77,11 +77,10 @@ _COMMAND_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧
 # Load .env from ~/.hermes/.env first, then project root as dev fallback.
 # User-managed env files should override stale shell exports on restart.
 from hermes_constants import get_hermes_home, display_hermes_home
-from hermes_cli.env_loader import load_hermes_dotenv
 
 _hermes_home = get_hermes_home()
-_project_env = Path(__file__).parent / '.env'
-load_hermes_dotenv(hermes_home=_hermes_home, project_env=_project_env)
+# .env is already loaded by main.py module level before cli is imported —
+# load_hermes_dotenv() in main.py:170 handles both ~/.hermes/.env and project/.env
 
 
 _REASONING_TAGS = (
@@ -648,13 +647,9 @@ def load_cli_config() -> Dict[str, Any]:
 # Load configuration at module startup
 CLI_CONFIG = load_cli_config()
 
-# Initialize centralized logging early — agent.log + errors.log in ~/.hermes/logs/.
-# This ensures CLI sessions produce a log trail even before AIAgent is instantiated.
-try:
-    from hermes_logging import setup_logging
-    setup_logging(mode="cli")
-except Exception:
-    pass  # Logging setup is best-effort — don't crash the CLI
+# Logging is already initialized by main.py module level (hermes_logging.setup_logging).
+# The function is idempotent — duplicate call here would be a no-op but still triggers
+# _read_logging_config() which reads config.yaml unnecessarily.
 
 # Validate config structure early — print warnings before user hits cryptic errors
 try:
@@ -678,16 +673,9 @@ try:
 except Exception:
     pass
 
-# Neuter AsyncHttpxClientWrapper.__del__ before any AsyncOpenAI clients are
-# created.  The SDK's __del__ schedules aclose() on asyncio.get_running_loop()
-# which, during CLI idle time, finds prompt_toolkit's event loop and tries to
-# close TCP transports bound to dead worker loops — producing
-# "Event loop is closed" / "Press ENTER to continue..." errors.
-try:
-    from agent.auxiliary_client import neuter_async_httpx_del
-    neuter_async_httpx_del()
-except Exception:
-    pass
+# neuter_async_httpx_del() is now called from HermesCLI.__init__ — deferred
+# past cli.py module load so auxiliary_client (and its openai → httpx import
+# chain) doesn't block CLI startup on Windows.
 
 from rich import box as rich_box
 from rich.console import Console
@@ -695,11 +683,13 @@ from rich.markup import escape as _escape
 from rich.panel import Panel
 from rich.text import Text as _RichText
 
-import fire
-
+# import fire is now lazy — only needed by CLI entry point fire.Fire(main)
 # Import the agent and tool systems
 from run_agent import AIAgent
-from model_tools import get_tool_definitions, get_toolset_for_tool
+
+# model_tools.get_tool_definitions / get_toolset_for_tool are now imported
+# lazily at each call site to avoid triggering discover_builtin_tools()
+# (which importlib.import_module()s all 29 tool files) at module load.
 
 # Extracted CLI modules (Phase 3)
 from hermes_cli.banner import build_welcome_banner
@@ -832,7 +822,7 @@ def _setup_worktree(repo_root: str = None) -> Optional[Dict[str, str]]:
     gitignore = Path(repo_root) / ".gitignore"
     _ignore_entry = ".worktrees/"
     try:
-        existing = gitignore.read_text() if gitignore.exists() else ""
+        existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
         if _ignore_entry not in existing.splitlines():
             with open(gitignore, "a", encoding="utf-8") as f:
                 if existing and not existing.endswith("\n"):
@@ -860,7 +850,7 @@ def _setup_worktree(repo_root: str = None) -> Optional[Dict[str, str]]:
         try:
             repo_root_resolved = Path(repo_root).resolve()
             wt_path_resolved = wt_path.resolve()
-            for line in include_file.read_text().splitlines():
+            for line in include_file.read_text(encoding="utf-8").splitlines():
                 entry = line.strip()
                 if not entry or entry.startswith("#"):
                     continue
@@ -1921,6 +1911,16 @@ class HermesCLI:
             resume: Session ID to resume (restores conversation history from SQLite)
             pass_session_id: Include the session ID in the agent's system prompt
         """
+        # Neuter AsyncHttpxClientWrapper.__del__ before any AsyncOpenAI
+        # clients are created (moved from module level so the
+        # auxiliary_client → openai → httpx import chain doesn't
+        # block CLI startup).
+        try:
+            from agent.auxiliary_client import neuter_async_httpx_del
+            neuter_async_httpx_del()
+        except Exception:
+            pass
+
         # Initialize Rich console
         self.console = Console()
         self.config = CLI_CONFIG
@@ -3561,6 +3561,7 @@ class HermesCLI:
     
     def show_banner(self):
         """Display the welcome banner in Claude Code style."""
+        from model_tools import get_tool_definitions
         self.console.clear()
 
         # Get context length for display before branching so it remains
@@ -4323,6 +4324,7 @@ class HermesCLI:
     
     def _show_status(self):
         """Show compact startup status line."""
+        from model_tools import get_tool_definitions
         # Get tool count
         tools = get_tool_definitions(enabled_toolsets=self.enabled_toolsets, quiet_mode=True)
         tool_count = len(tools) if tools else 0
@@ -4469,6 +4471,7 @@ class HermesCLI:
     
     def show_tools(self):
         """Display available tools with kawaii ASCII art."""
+        from model_tools import get_tool_definitions, get_toolset_for_tool
         tools = get_tool_definitions(enabled_toolsets=self.enabled_toolsets, quiet_mode=True)
         
         if not tools:
@@ -6045,8 +6048,9 @@ class HermesCLI:
     def process_command(self, command: str) -> bool:
         """
         Process a slash command.
-        
+
         Args:
+            command: Slash command string (e.g., "/model sonnet")
             command: The command string (starting with /)
             
         Returns:
@@ -6059,6 +6063,7 @@ class HermesCLI:
         # Resolve aliases via central registry so adding an alias is a one-line
         # change in hermes_cli/commands.py instead of touching every dispatch site.
         from hermes_cli.commands import resolve_command as _resolve_cmd
+        from model_tools import get_tool_definitions
         _base_word = cmd_lower.split()[0].lstrip("/")
         _cmd_def = _resolve_cmd(_base_word)
         canonical = _cmd_def.name if _cmd_def else _base_word
@@ -7350,7 +7355,10 @@ class HermesCLI:
 
         After reconnecting, refreshes the agent's tool list so the model
         sees the updated tools on the next turn.
-        """
+
+        On completion, prints how many tools are available and from how many
+        servers."""
+        from model_tools import get_tool_definitions
         try:
             from tools.mcp_tool import shutdown_mcp_servers, discover_mcp_tools, _servers, _lock
 
@@ -11402,4 +11410,5 @@ def main(
 
 
 if __name__ == "__main__":
+    import fire
     fire.Fire(main)

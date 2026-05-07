@@ -41,8 +41,7 @@ import urllib.request
 import uuid
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse, parse_qs, urlunparse
-from openai import OpenAI
-import fire
+# import fire is now lazy — only needed by CLI entry point (fire.Fire(main))
 from datetime import datetime
 from pathlib import Path
 
@@ -66,13 +65,10 @@ else:
     logger.info("No .env file found. Using system environment variables.")
 
 
-# Import our tool system
-from model_tools import (
-    get_tool_definitions,
-    get_toolset_for_tool,
-    handle_function_call,
-    check_toolset_requirements,
-)
+# model_tools imports (get_tool_definitions, get_toolset_for_tool,
+# handle_function_call, check_toolset_requirements) are now lazy at
+# each call site to avoid triggering discover_builtin_tools() (which
+# importlib.import_module()s all 29 tool files) at CLI startup.
 from tools.terminal_tool import cleanup_vm, get_active_env, is_persistent_env
 from tools.terminal_tool import (
     set_approval_callback as _set_approval_callback,
@@ -1479,6 +1475,7 @@ class AIAgent:
                       " → ".join(f"{f['model']} ({f['provider']})" for f in self._fallback_chain))
 
         # Get available tools with filtering
+        from model_tools import get_tool_definitions
         self.tools = get_tool_definitions(
             enabled_toolsets=enabled_toolsets,
             disabled_toolsets=disabled_toolsets,
@@ -1503,6 +1500,7 @@ class AIAgent:
         
         # Check tool requirements
         if self.tools and not self.quiet_mode:
+            from model_tools import check_toolset_requirements
             requirements = check_toolset_requirements()
             missing_reqs = [name for name, available in requirements.items() if not available]
             if missing_reqs:
@@ -4660,6 +4658,7 @@ class AIAgent:
 
         has_skills_tools = any(name in self.valid_tool_names for name in ['skills_list', 'skill_view', 'skill_manage'])
         if has_skills_tools:
+            from model_tools import get_toolset_for_tool
             avail_toolsets = {
                 toolset
                 for toolset in (
@@ -5175,6 +5174,7 @@ class AIAgent:
             return None
 
     def _create_openai_client(self, client_kwargs: dict, *, reason: str, shared: bool) -> Any:
+        from openai import OpenAI
         from agent.auxiliary_client import _validate_base_url, _validate_proxy_env_urls
         # Treat client_kwargs as read-only. Callers pass self._client_kwargs (or shallow
         # copies of it) in; any in-place mutation leaks back into the stored dict and is
@@ -8800,6 +8800,8 @@ class AIAgent:
         tools. Used by the concurrent execution path; the sequential path retains
         its own inline invocation for backward-compatible display handling.
         """
+        from model_tools import handle_function_call
+
         # Check plugin hooks for a block directive before executing anything.
         block_message: Optional[str] = None
         try:
@@ -9232,6 +9234,8 @@ class AIAgent:
 
     def _execute_tool_calls_sequential(self, assistant_message, messages: list, effective_task_id: str, api_call_count: int = 0) -> None:
         """Execute tool calls sequentially (original behavior). Used for single calls or interactive tools."""
+        from model_tools import handle_function_call
+
         for i, tool_call in enumerate(assistant_message.tool_calls, 1):
             # SAFETY: check interrupt BEFORE starting each tool.
             # If the user sent "stop" during a previous tool's execution,
@@ -13405,6 +13409,7 @@ def main(
                 print(f"    Requirements: {', '.join(info['requirements'])}")
         
         # Show individual tools
+        from model_tools import get_toolset_for_tool
         all_tools = get_all_tool_names()
         print(f"\n🔧 Individual Tools ({len(all_tools)} available):")
         for tool_name in sorted(all_tools):
@@ -13520,4 +13525,5 @@ def main(
 
 
 if __name__ == "__main__":
+    import fire
     fire.Fire(main)
